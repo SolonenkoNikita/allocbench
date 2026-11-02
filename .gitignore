@@ -1,0 +1,15 @@
+# Build output
+/allocbench
+/bin/
+
+# Go test artifacts
+*.test
+*.out
+coverage.*
+
+# Artifacts and run results
+/store/
+/results/
+
+# Spike output: rootfs tarballs and test builds
+/spikes/out/
