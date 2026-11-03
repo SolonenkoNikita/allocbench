@@ -1,0 +1,15 @@
+build_env = "gcc13"
+
+[source]
+path = "bench-src/cfrac"
+
+[build]
+script = "make"
+
+[run]
+cmd     = ["/bench/bin/cfrac", "175451865205073170563711388363"]
+timeout = "5m"
+threads = [1, 4]
+
+[check]
+stdout_sha256 = "abc"
