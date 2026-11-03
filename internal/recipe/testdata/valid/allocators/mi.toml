@@ -1,0 +1,18 @@
+version   = "v1.8.2"
+build_env = "gcc13"
+
+[source]
+git    = "https://github.com/microsoft/mimalloc"
+rev    = "b66e3214"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[build]
+script = """
+cmake -S /src -B . -G Ninja $CMAKE_FLAGS
+ninja
+"""
+vars = { CMAKE_FLAGS = "-DCMAKE_BUILD_TYPE=Release" }
+
+[use]
+preload = "lib/libmimalloc.so"
+env     = { MIMALLOC_VERBOSE = "0" }

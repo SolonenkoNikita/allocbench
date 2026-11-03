@@ -1,0 +1,5 @@
+buidl_env = "gcc13"
+
+[use]
+preload = "lib/libmimalloc.so"
+preloat = "typo"

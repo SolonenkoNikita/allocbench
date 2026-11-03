@@ -1,0 +1,4 @@
+build_env = "gcc13"
+
+[run]
+cmd = ["/bench/bin/cfrac"

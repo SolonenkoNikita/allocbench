@@ -1,0 +1,4 @@
+extends = "mi"
+
+[build]
+vars = { CMAKE_FLAGS = "-DMI_SECURE=ON" }
