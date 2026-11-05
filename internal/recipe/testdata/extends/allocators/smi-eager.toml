@@ -1,0 +1,4 @@
+extends = "smi"
+
+[use]
+env = { MIMALLOC_ARENA_EAGER_COMMIT = "1" }
