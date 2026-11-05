@@ -1,0 +1,6 @@
+build_env = "gcc13"
+
+[run]
+cmd     = ["/bench/bin/larson", "5", "8"]
+timeout = "5m"
+threads = [1, 4, 16]
