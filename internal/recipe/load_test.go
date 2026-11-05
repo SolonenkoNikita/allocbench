@@ -35,7 +35,7 @@ func TestLoadValid(t *testing.T) {
 	}
 
 	mi := s.Allocators["mi"]
-	if mi.Version != "v1.8.2" || mi.BuildEnv != "gcc13" || mi.Source.Rev != "b66e3214" {
+	if mi.Version != "v1.8.2" || mi.BuildEnv != "gcc13" || mi.Source.Rev != testRev {
 		t.Errorf("allocator mi: %+v", mi)
 	}
 	if mi.Build.Vars["CMAKE_FLAGS"] != "-DCMAKE_BUILD_TYPE=Release" {
