@@ -2,7 +2,7 @@ build_env = "gcc13"
 
 [source]
 url    = "https://example.com/cmake.tar.gz"
-sha256 = "abc"
+sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 [build]
 script = "cp -r /src/. /out/"

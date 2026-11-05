@@ -3,7 +3,7 @@ build_env = "gcc13"
 
 [source]
 git    = "https://github.com/microsoft/mimalloc"
-rev    = "b66e3214"
+rev    = "b66e3214d8a104669c2ec05ae91ebc26a8f5ab78"
 sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 
 [build]
