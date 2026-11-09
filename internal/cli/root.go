@@ -2,8 +2,13 @@ package cli
 
 import "github.com/spf13/cobra"
 
+type options struct {
+	recipes string
+}
+
 func NewRootCommand(version string) *cobra.Command {
-	return &cobra.Command{
+	opts := &options{}
+	cmd := &cobra.Command{
 		Use:           "allocbench",
 		Short:         "Reproducible allocator benchmarks in isolated environments",
 		Version:       version,
@@ -14,4 +19,7 @@ func NewRootCommand(version string) *cobra.Command {
 			return cmd.Help()
 		},
 	}
+	cmd.PersistentFlags().StringVar(&opts.recipes, "recipes", "recipes", "directory with recipes")
+	cmd.AddCommand(newListCommand(opts))
+	return cmd
 }
