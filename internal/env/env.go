@@ -14,12 +14,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SolonenkoNikita/allocbench/internal/logs"
 	"github.com/SolonenkoNikita/allocbench/internal/recipe"
 	"github.com/SolonenkoNikita/allocbench/internal/source"
 	"github.com/SolonenkoNikita/allocbench/internal/store"
 )
 
 const (
+	logTail   = 20
 	rootfsDir = "rootfs"
 	infoFile  = "env.json"
 )
@@ -55,17 +57,28 @@ func (b *Builder) Ensure(e recipe.Env, hash string) (Env, error) {
 	if err != nil {
 		return Env{}, err
 	}
-	epoch, err := snapshotEpoch(e.Snapshot)
+	epoch, err := SnapshotEpoch(e.Snapshot)
 	if err != nil {
 		return Env{}, err
 	}
 
+	logPath := b.Store.Log(store.Env, hash)
+	log, err := os.Create(logPath)
+	if err != nil {
+		return Env{}, err
+	}
+	defer log.Close()
+	var w io.Writer = log
+	if b.Log != nil {
+		w = io.MultiWriter(log, b.Log)
+	}
+
 	cmd := exec.Command(b.mmdebstrap(), args...)
 	cmd.Env = append(os.Environ(), "SOURCE_DATE_EPOCH="+strconv.FormatInt(epoch, 10))
-	cmd.Stdout = b.Log
-	cmd.Stderr = b.Log
+	cmd.Stdout = w
+	cmd.Stderr = w
 	if err := cmd.Run(); err != nil {
-		return Env{}, fmt.Errorf("mmdebstrap: %w", err)
+		return Env{}, fmt.Errorf("mmdebstrap: %w\n%s\nfull log: %s", err, logs.Tail(logPath, logTail), logPath)
 	}
 
 	f, err := os.Open(tarball)
@@ -150,7 +163,7 @@ func Args(e recipe.Env, out, mirror, proxy string) ([]string, error) {
 	return args, nil
 }
 
-func snapshotEpoch(snapshot string) (int64, error) {
+func SnapshotEpoch(snapshot string) (int64, error) {
 	t, err := time.Parse("20060102T150405Z", snapshot)
 	if err != nil {
 		return 0, fmt.Errorf("snapshot %q: %w", snapshot, err)

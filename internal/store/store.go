@@ -29,7 +29,11 @@ type Store struct {
 }
 
 func Open(root string) (*Store, error) {
-	for _, dir := range []string{string(Src), string(Env), string(Build), "tmp", "locks"} {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, dir := range []string{string(Src), string(Env), string(Build), "tmp", "locks", "logs"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
 			return nil, err
 		}
@@ -39,6 +43,10 @@ func Open(root string) (*Store, error) {
 
 func (s *Store) Path(kind Kind, hash string) string {
 	return filepath.Join(s.root, string(kind), hash)
+}
+
+func (s *Store) Log(kind Kind, hash string) string {
+	return filepath.Join(s.root, "logs", string(kind)+"-"+hash+".log")
 }
 
 func (s *Store) Has(kind Kind, hash string) bool {

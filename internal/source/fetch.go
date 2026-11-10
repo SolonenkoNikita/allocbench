@@ -31,7 +31,7 @@ type Result struct {
 }
 
 func (f *Fetcher) Fetch(src recipe.Source) (Result, error) {
-	key, err := f.key(src)
+	key, err := f.Key(src)
 	if err != nil {
 		return Result{}, err
 	}
@@ -90,7 +90,7 @@ func (f *Fetcher) result(key string) (Result, error) {
 	return Result{Key: key, Tree: tree, Dir: dir}, nil
 }
 
-func (f *Fetcher) key(src recipe.Source) (string, error) {
+func (f *Fetcher) Key(src recipe.Source) (string, error) {
 	h := sha256.New()
 	switch {
 	case src.Git != "":

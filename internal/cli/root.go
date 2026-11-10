@@ -4,6 +4,10 @@ import "github.com/spf13/cobra"
 
 type options struct {
 	recipes string
+	store   string
+	mirror  string
+	proxy   string
+	verbose bool
 }
 
 func NewRootCommand(version string) *cobra.Command {
@@ -19,7 +23,12 @@ func NewRootCommand(version string) *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.PersistentFlags().StringVar(&opts.recipes, "recipes", "recipes", "directory with recipes")
-	cmd.AddCommand(newListCommand(opts))
+	flags := cmd.PersistentFlags()
+	flags.StringVar(&opts.recipes, "recipes", "recipes", "directory with recipes")
+	flags.StringVar(&opts.store, "store", "store", "directory for sources, environments and builds")
+	flags.StringVar(&opts.mirror, "mirror", "", "package mirror instead of the snapshot from the env recipe")
+	flags.StringVar(&opts.proxy, "proxy", proxyFromEnv(), "HTTP proxy for package downloads")
+	flags.BoolVarP(&opts.verbose, "verbose", "v", false, "show build and environment output")
+	cmd.AddCommand(newListCommand(opts), newBuildCommand(opts))
 	return cmd
 }

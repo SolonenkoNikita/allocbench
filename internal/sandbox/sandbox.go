@@ -24,10 +24,12 @@ type Spec struct {
 	Cmd    []string
 }
 
+const DefaultPath = "/usr/local/bin:/usr/bin:/bin"
+
 var (
 	rootfsDirs = []string{"usr", "etc", "bin", "sbin", "lib", "lib32", "lib64", "libx32"}
 	defaultEnv = map[string]string{
-		"PATH":   "/usr/local/bin:/usr/bin:/bin",
+		"PATH":   DefaultPath,
 		"HOME":   "/tmp",
 		"LC_ALL": "C.UTF-8",
 		"TZ":     "UTC",

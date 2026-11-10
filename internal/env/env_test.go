@@ -72,11 +72,11 @@ func TestArgsUnsupportedDistro(t *testing.T) {
 }
 
 func TestSnapshotEpoch(t *testing.T) {
-	got, err := snapshotEpoch("20260101T000000Z")
+	got, err := SnapshotEpoch("20260101T000000Z")
 	if err != nil || got != 1767225600 {
 		t.Errorf("got %d, %v", got, err)
 	}
-	if _, err := snapshotEpoch("2026-01-01"); err == nil {
+	if _, err := SnapshotEpoch("2026-01-01"); err == nil {
 		t.Error("expected an error")
 	}
 }
