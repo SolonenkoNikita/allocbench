@@ -203,8 +203,17 @@ func TestEnsureFailure(t *testing.T) {
 	os.WriteFile(filepath.Join(f.dir, "fail"), nil, 0o644)
 
 	_, err := f.b.Ensure(testEnv, testHash)
-	if err == nil || !strings.Contains(err.Error(), "mmdebstrap") {
-		t.Fatalf("got %v", err)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	logPath := f.b.Store.Log(store.Env, testHash)
+	for _, w := range []string{"mmdebstrap: exit status 1", "  | E: download failed", "full log: " + logPath} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("error %q does not contain %q", err, w)
+		}
+	}
+	if data, _ := os.ReadFile(logPath); string(data) != "E: download failed\n" {
+		t.Errorf("log: %q", data)
 	}
 	if f.b.Store.Has(store.Env, testHash) {
 		t.Error("failed env is in the store")
@@ -237,5 +246,16 @@ func TestEnsureBadRecipe(t *testing.T) {
 	}
 	if n := f.calls(t); n != 0 {
 		t.Errorf("mmdebstrap was called %d times for a bad recipe", n)
+	}
+}
+
+func TestEnsureLogCopy(t *testing.T) {
+	f := newFake(t)
+	var out strings.Builder
+	f.b.Log = &out
+	os.WriteFile(filepath.Join(f.dir, "fail"), nil, 0o644)
+	f.b.Ensure(testEnv, testHash)
+	if out.String() != "E: download failed\n" {
+		t.Errorf("Log writer got %q", out.String())
 	}
 }

@@ -388,3 +388,40 @@ func TestFetchMissingSources(t *testing.T) {
 		t.Error("empty source: expected an error")
 	}
 }
+
+func TestKey(t *testing.T) {
+	f := newFetcher(t)
+	writeFile(t, filepath.Join(f.Root, "src", "a.c"), "int a;\n", 0o644)
+	writeFile(t, filepath.Join(f.Root, "fix.patch"), "patch\n", 0o644)
+	src := recipe.Source{Path: "src"}
+
+	k1, err := f.Key(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := f.Fetch(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Key != k1 {
+		t.Errorf("Fetch key %s differs from Key %s", r.Key, k1)
+	}
+	if !f.Store.Has(store.Src, k1) {
+		t.Error("fetched source is not in the store")
+	}
+
+	writeFile(t, filepath.Join(f.Root, "src", "a.c"), "int b;\n", 0o644)
+	k2, _ := f.Key(src)
+	patched, _ := f.Key(recipe.Source{Path: "src", Patches: []string{"fix.patch"}})
+	git, _ := f.Key(recipe.Source{Git: "https://example.com/x", Rev: strings.Repeat("a", 40)})
+	if len(map[string]bool{k1: true, k2: true, patched: true, git: true}) != 4 {
+		t.Errorf("keys are not distinct: %s %s %s %s", k1, k2, patched, git)
+	}
+	if f.Store.Has(store.Src, k2) {
+		t.Error("Key wrote to the store")
+	}
+
+	if _, err := f.Key(recipe.Source{}); err == nil {
+		t.Error("expected an error for an empty source")
+	}
+}

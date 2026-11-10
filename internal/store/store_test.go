@@ -38,7 +38,7 @@ func tmpEntries(t *testing.T, s *Store) []string {
 
 func TestOpenCreatesLayout(t *testing.T) {
 	s := openStore(t)
-	for _, dir := range []string{"src", "env", "build", "tmp", "locks"} {
+	for _, dir := range []string{"src", "env", "build", "tmp", "locks", "logs"} {
 		if fi, err := os.Stat(filepath.Join(s.root, dir)); err != nil || !fi.IsDir() {
 			t.Errorf("%s: not a directory: %v", dir, err)
 		}
@@ -234,5 +234,35 @@ func TestInvalidHash(t *testing.T) {
 		if _, err := s.Create(Build, h); err == nil {
 			t.Errorf("Create(%q) should fail", h)
 		}
+	}
+}
+
+func TestOpenMakesRootAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(wd) })
+
+	s, err := Open("store")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := s.Path(Build, hashA), filepath.Join(dir, "store", "build", hashA); got != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+}
+
+func TestLog(t *testing.T) {
+	s := openStore(t)
+	if got, want := s.Log(Build, hashA), filepath.Join(s.root, "logs", "build-"+hashA+".log"); got != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+	if s.Log(Env, hashA) == s.Log(Build, hashA) {
+		t.Error("env and build logs share a path")
 	}
 }
