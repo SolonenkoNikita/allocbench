@@ -1,0 +1,11 @@
+build_env = "gcc13"
+
+[source]
+path = "runner"
+
+[build]
+script = '''
+mkdir -p /out/bin
+gcc $CFLAGS -o /out/bin/runner /src/runner.c
+'''
+vars = { CFLAGS = "-O2 -std=c11 -Wall -Wextra -Wshadow -Wconversion -Wpedantic -Werror -static" }

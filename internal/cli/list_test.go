@@ -146,8 +146,14 @@ func TestListRepoRecipes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repo recipes are invalid: %v\n%s", err, out)
 	}
-	for _, w := range []string{"env        gcc13", "allocator  mi     v1.8.2   gcc13", "allocator  sys", "bench      cfrac  -        gcc13"} {
-		if !strings.Contains(out, w) {
+	rows := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) >= 4 {
+			rows[strings.Join(f[:4], " ")] = true
+		}
+	}
+	for _, w := range []string{"env gcc13 - -", "allocator mi v1.8.2 gcc13", "allocator sys - -", "bench cfrac - gcc13", "tool runner - gcc13"} {
+		if !rows[w] {
 			t.Errorf("missing %q in:\n%s", w, out)
 		}
 	}
