@@ -16,12 +16,13 @@ type Mount struct {
 }
 
 type Spec struct {
-	Rootfs string
-	Mounts []Mount
-	Tmpfs  []string
-	Env    map[string]string
-	Dir    string
-	Cmd    []string
+	Rootfs      string
+	Mounts      []Mount
+	Tmpfs       []string
+	Env         map[string]string
+	Dir         string
+	Cmd         []string
+	Interactive bool
 }
 
 const DefaultPath = "/usr/local/bin:/usr/bin:/bin"
@@ -44,7 +45,11 @@ func Args(s Spec) ([]string, error) {
 		return nil, fmt.Errorf("command must start with an absolute path, got %q", s.Cmd)
 	}
 
-	args := []string{"--unshare-all", "--die-with-parent", "--new-session", "--clearenv"}
+	args := []string{"--unshare-all", "--die-with-parent"}
+	if !s.Interactive {
+		args = append(args, "--new-session")
+	}
+	args = append(args, "--clearenv")
 
 	for _, name := range rootfsDirs {
 		src := filepath.Join(s.Rootfs, name)

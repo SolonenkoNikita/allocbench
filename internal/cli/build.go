@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -84,7 +85,7 @@ func newBuilder(opts *options, s *recipe.Set, progress io.Writer) (*build.Builde
 func resolveRefs(s *recipe.Set, args []string) ([]string, error) {
 	var refs []string
 	for _, arg := range args {
-		ref, err := resolveRef(s, arg)
+		ref, err := resolveRef(s, arg, buildKinds)
 		if err != nil {
 			return nil, err
 		}
@@ -93,9 +94,15 @@ func resolveRefs(s *recipe.Set, args []string) ([]string, error) {
 	return refs, nil
 }
 
-func resolveRef(s *recipe.Set, arg string) (string, error) {
+func resolveRef(s *recipe.Set, arg string, kinds []string) (string, error) {
 	has := func(kind, name string) bool {
+		if !slices.Contains(kinds, kind) {
+			return false
+		}
 		switch kind {
+		case "envs":
+			_, ok := s.Envs[name]
+			return ok
 		case "allocators":
 			_, ok := s.Allocators[name]
 			return ok
@@ -117,18 +124,30 @@ func resolveRef(s *recipe.Set, arg string) (string, error) {
 	}
 
 	var found []string
-	for _, kind := range buildKinds {
+	for _, kind := range kinds {
 		if has(kind, arg) {
 			found = append(found, kind+"/"+arg)
 		}
 	}
 	switch len(found) {
 	case 0:
-		return "", fmt.Errorf("%s: no allocator, bench or tool with this name", arg)
+		return "", fmt.Errorf("%s: no %s with this name", arg, describeKinds(kinds))
 	case 1:
 		return found[0], nil
 	}
 	return "", fmt.Errorf("%s is ambiguous, use one of: %s", arg, strings.Join(found, ", "))
+}
+
+func describeKinds(kinds []string) string {
+	names := map[string]string{"allocators": "allocator", "benches": "bench", "tools": "tool", "envs": "env"}
+	var out []string
+	for _, k := range kinds {
+		out = append(out, names[k])
+	}
+	if len(out) < 2 {
+		return strings.Join(out, "")
+	}
+	return strings.Join(out[:len(out)-1], ", ") + " or " + out[len(out)-1]
 }
 
 func printBuilds(out io.Writer, results []build.Result) error {

@@ -26,7 +26,7 @@ func TestResolveRef(t *testing.T) {
 		"benches/same":    "benches/same",
 	}
 	for arg, want := range ok {
-		if got, err := resolveRef(s, arg); err != nil || got != want {
+		if got, err := resolveRef(s, arg, buildKinds); err != nil || got != want {
 			t.Errorf("%s: got %q, %v, want %q", arg, got, err, want)
 		}
 	}
@@ -38,7 +38,7 @@ func TestResolveRef(t *testing.T) {
 		"envs/mi":         "no such recipe",
 	}
 	for arg, want := range bad {
-		if _, err := resolveRef(s, arg); err == nil || !strings.Contains(err.Error(), want) {
+		if _, err := resolveRef(s, arg, buildKinds); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: got %v, want %q", arg, err, want)
 		}
 	}

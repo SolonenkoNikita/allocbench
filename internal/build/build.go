@@ -65,21 +65,13 @@ func (b *Builder) Build(ref string) (Result, error) {
 		return b.remember(Result{Recipe: ref, Cached: true}), nil
 	}
 
-	deps := make([]Result, len(t.build.Deps))
-	for i, d := range t.build.Deps {
-		if deps[i], err = b.Build("tools/" + d); err != nil {
-			return Result{}, err
-		}
-	}
-
-	if t.src.Path == "" {
-		if key, err := b.Sources.Key(t.src); err == nil && !b.Store.Has(store.Src, key) {
-			b.progress("fetching source of %s", ref)
-		}
-	}
-	src, err := b.Sources.Fetch(t.src)
+	deps, err := b.deps(t)
 	if err != nil {
-		return Result{}, fmt.Errorf("%s: source: %w", ref, err)
+		return Result{}, err
+	}
+	src, err := b.fetch(ref, t)
+	if err != nil {
+		return Result{}, err
 	}
 
 	key := inputKey(t, src.Key, deps)
@@ -95,26 +87,75 @@ func (b *Builder) Build(ref string) (Result, error) {
 	}
 	defer entry.Abort()
 
-	envHash, err := b.Set.EnvHash(t.buildEnv)
+	e, err := b.env(ref, t.buildEnv)
 	if err != nil {
-		return Result{}, fmt.Errorf("%s: %w", ref, err)
-	}
-	if !b.Store.Has(store.Env, envHash) {
-		b.progress("creating environment %s, this takes a few minutes", t.buildEnv)
-	}
-	e, err := b.Envs.Ensure(b.Set.Envs[t.buildEnv], envHash)
-	if err != nil {
-		return Result{}, fmt.Errorf("%s: environment %s: %w", ref, t.buildEnv, err)
+		return Result{}, err
 	}
 
 	b.progress("building %s", ref)
-	if err := b.run(t, e, src, deps, entry.Dir, res.Log); err != nil {
+	spec, err := b.spec(t, e, src, deps, entry.Dir)
+	if err != nil {
+		return Result{}, fmt.Errorf("%s: %w", ref, err)
+	}
+	spec.Cmd = []string{"/bin/sh", "-euc", t.build.Script}
+	if err := b.run(spec, entry.Dir, res.Log); err != nil {
 		return Result{}, fmt.Errorf("%s: %w", ref, err)
 	}
 	if err := entry.Commit(); err != nil {
 		return Result{}, err
 	}
 	return b.remember(res), nil
+}
+
+func (b *Builder) Shell(ref, out string) (sandbox.Spec, error) {
+	t, err := b.target(ref)
+	if err != nil {
+		return sandbox.Spec{}, err
+	}
+	if t.hash == "" {
+		return sandbox.Spec{}, fmt.Errorf("%s has nothing to build, open a shell in an environment instead", ref)
+	}
+	deps, err := b.deps(t)
+	if err != nil {
+		return sandbox.Spec{}, err
+	}
+	src, err := b.fetch(ref, t)
+	if err != nil {
+		return sandbox.Spec{}, err
+	}
+	e, err := b.env(ref, t.buildEnv)
+	if err != nil {
+		return sandbox.Spec{}, err
+	}
+	spec, err := b.spec(t, e, src, deps, out)
+	if err != nil {
+		return sandbox.Spec{}, fmt.Errorf("%s: %w", ref, err)
+	}
+	return spec, nil
+}
+
+func (b *Builder) EnvShell(name string) (sandbox.Spec, error) {
+	if _, ok := b.Set.Envs[name]; !ok {
+		return sandbox.Spec{}, fmt.Errorf("envs/%s: no such recipe", name)
+	}
+	e, err := b.env("envs/"+name, name)
+	if err != nil {
+		return sandbox.Spec{}, err
+	}
+	return sandbox.Spec{
+		Rootfs: e.Rootfs,
+		Tmpfs:  []string{"/build"},
+		Env:    map[string]string{"HOME": "/build"},
+		Dir:    "/build",
+	}, nil
+}
+
+func (b *Builder) Command(spec sandbox.Spec) (*exec.Cmd, error) {
+	args, err := sandbox.Args(spec)
+	if err != nil {
+		return nil, err
+	}
+	return exec.Command(b.bwrap(), args...), nil
 }
 
 func (b *Builder) remember(r Result) Result {
@@ -160,6 +201,46 @@ func (b *Builder) target(ref string) (target, error) {
 	return t, err
 }
 
+func (b *Builder) deps(t target) ([]Result, error) {
+	deps := make([]Result, len(t.build.Deps))
+	for i, d := range t.build.Deps {
+		r, err := b.Build("tools/" + d)
+		if err != nil {
+			return nil, err
+		}
+		deps[i] = r
+	}
+	return deps, nil
+}
+
+func (b *Builder) fetch(ref string, t target) (source.Result, error) {
+	if t.src.Path == "" {
+		if key, err := b.Sources.Key(t.src); err == nil && !b.Store.Has(store.Src, key) {
+			b.progress("fetching source of %s", ref)
+		}
+	}
+	src, err := b.Sources.Fetch(t.src)
+	if err != nil {
+		return source.Result{}, fmt.Errorf("%s: source: %w", ref, err)
+	}
+	return src, nil
+}
+
+func (b *Builder) env(ref, name string) (env.Env, error) {
+	hash, err := b.Set.EnvHash(name)
+	if err != nil {
+		return env.Env{}, fmt.Errorf("%s: %w", ref, err)
+	}
+	if !b.Store.Has(store.Env, hash) {
+		b.progress("creating environment %s, this takes a few minutes", name)
+	}
+	e, err := b.Envs.Ensure(b.Set.Envs[name], hash)
+	if err != nil {
+		return env.Env{}, fmt.Errorf("%s: environment %s: %w", ref, name, err)
+	}
+	return e, nil
+}
+
 func inputKey(t target, srcKey string, deps []Result) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00%s\n", keyVersion, t.hash, srcKey)
@@ -169,10 +250,10 @@ func inputKey(t target, srcKey string, deps []Result) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func (b *Builder) run(t target, e env.Env, src source.Result, deps []Result, out, logPath string) error {
+func (b *Builder) spec(t target, e env.Env, src source.Result, deps []Result, out string) (sandbox.Spec, error) {
 	epoch, err := env.SnapshotEpoch(b.Set.Envs[t.buildEnv].Snapshot)
 	if err != nil {
-		return err
+		return sandbox.Spec{}, err
 	}
 
 	vars := map[string]string{}
@@ -191,14 +272,17 @@ func (b *Builder) run(t target, e env.Env, src source.Result, deps []Result, out
 	vars["JOBS"] = strconv.Itoa(b.jobs())
 	vars["SOURCE_DATE_EPOCH"] = strconv.FormatInt(epoch, 10)
 
-	args, err := sandbox.Args(sandbox.Spec{
+	return sandbox.Spec{
 		Rootfs: e.Rootfs,
 		Mounts: mounts,
 		Tmpfs:  []string{"/build"},
 		Env:    vars,
 		Dir:    "/build",
-		Cmd:    []string{"/bin/sh", "-euc", t.build.Script},
-	})
+	}, nil
+}
+
+func (b *Builder) run(spec sandbox.Spec, out, logPath string) error {
+	cmd, err := b.Command(spec)
 	if err != nil {
 		return err
 	}
@@ -213,7 +297,6 @@ func (b *Builder) run(t target, e env.Env, src source.Result, deps []Result, out
 	if b.Output != nil {
 		w = io.MultiWriter(log, b.Output)
 	}
-	cmd := exec.Command(b.bwrap(), args...)
 	cmd.Stdout = w
 	cmd.Stderr = w
 	if err := cmd.Run(); err != nil {
