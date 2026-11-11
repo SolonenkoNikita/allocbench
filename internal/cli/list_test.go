@@ -140,3 +140,15 @@ func TestListRejectsArgs(t *testing.T) {
 		t.Error("expected an error for an extra argument")
 	}
 }
+
+func TestListRepoRecipes(t *testing.T) {
+	out, err := runCLI(t, "list", "--recipes", filepath.Join("..", "..", "recipes"))
+	if err != nil {
+		t.Fatalf("repo recipes are invalid: %v\n%s", err, out)
+	}
+	for _, w := range []string{"env        gcc13", "allocator  mi     v1.8.2   gcc13", "allocator  sys", "bench      cfrac  -        gcc13"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing %q in:\n%s", w, out)
+		}
+	}
+}
