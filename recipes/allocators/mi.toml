@@ -1,0 +1,18 @@
+version   = "v1.8.2"
+build_env = "gcc13"
+
+[source]
+git    = "https://github.com/microsoft/mimalloc"
+rev    = "b66e3214d8a104669c2ec05ae91ebc26a8f5ab78"
+sha256 = "a27f09204d8273efed245a8ed7093fd062d65b1a14fb0fa121e375b96b5aff3d"
+
+[build]
+script = '''
+cmake -S /src -B . -G Ninja $CMAKE_FLAGS
+ninja -j "$JOBS"
+install -Dm755 libmimalloc.so /out/lib/libmimalloc.so
+'''
+vars = { CMAKE_FLAGS = "-DCMAKE_BUILD_TYPE=Release -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=OFF -DMI_BUILD_STATIC=OFF" }
+
+[use]
+preload = "lib/libmimalloc.so"

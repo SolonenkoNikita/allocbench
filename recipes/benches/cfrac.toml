@@ -1,0 +1,28 @@
+build_env = "gcc13"
+
+[source]
+git    = "https://github.com/daanx/mimalloc-bench"
+rev    = "69c41ed7e6419fb5d362eb04ba34b850ec89dc8e"
+sha256 = "2ff71f5e3b39d6467d199eac07f794e1bf80e140030a6e082fdefd27af022fd2"
+
+[build]
+script = '''
+cd /src/bench/cfrac
+mkdir -p /out/bin
+gcc $CFLAGS -o /out/bin/cfrac \
+    cfrac.c pops.c pconst.c pio.c \
+    pabs.c pneg.c pcmp.c podd.c phalf.c \
+    padd.c psub.c pmul.c pdivmod.c psqrt.c ppowmod.c \
+    atop.c ptoa.c itop.c utop.c ptou.c errorp.c \
+    pfloat.c pidiv.c pimod.c picmp.c \
+    primes.c pcfrac.c pgcd.c -lm
+'''
+vars = { CFLAGS = "-O3 -DNDEBUG -std=gnu89 -DNOMEMOPT=1 -w" }
+
+[run]
+cmd     = ["/bench/bin/cfrac", "17545186520507317056371138836327483792789528"]
+timeout = "5m"
+threads = [1]
+
+[check]
+stdout_sha256 = "99eb4f7b4392295adfe8b8d257802f910cdbc1eaf9b8f8785c6b62fc32229ef6"

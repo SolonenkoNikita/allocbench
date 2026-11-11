@@ -1,0 +1,4 @@
+distro   = "ubuntu"
+suite    = "noble"
+snapshot = "20260101T000000Z"
+packages = ["build-essential", "gcc-13", "g++-13", "cmake", "ninja-build"]
