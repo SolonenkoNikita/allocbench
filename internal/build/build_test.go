@@ -9,6 +9,7 @@ import (
 
 	"github.com/SolonenkoNikita/allocbench/internal/env"
 	"github.com/SolonenkoNikita/allocbench/internal/recipe"
+	"github.com/SolonenkoNikita/allocbench/internal/sandbox"
 	"github.com/SolonenkoNikita/allocbench/internal/source"
 	"github.com/SolonenkoNikita/allocbench/internal/store"
 )
@@ -325,5 +326,99 @@ func TestInputKey(t *testing.T) {
 		if other == k {
 			t.Errorf("changing the %s does not change the key", what)
 		}
+	}
+}
+
+func TestShell(t *testing.T) {
+	f := newFixture(t)
+	f.hostEnv(t)
+	needBwrap(t)
+	out := t.TempDir()
+	b := f.builder()
+
+	spec, err := b.Shell("allocators/hello", out)
+	if err != nil {
+		t.Fatalf("Shell: %v", err)
+	}
+	if !f.store.Has(store.Build, b.done["tools/greet"].Hash) {
+		t.Error("dependency is not built")
+	}
+	dsts := map[string]sandbox.Mount{}
+	for _, m := range spec.Mounts {
+		dsts[m.Dst] = m
+	}
+	if m := dsts["/out"]; m.Src != out || !m.RW {
+		t.Errorf("/out: %+v", m)
+	}
+	if m := dsts["/src"]; m.RW || m.Src == "" {
+		t.Errorf("/src: %+v", m)
+	}
+	if m := dsts["/deps/greet"]; m.RW || m.Src != b.done["tools/greet"].Dir {
+		t.Errorf("/deps/greet: %+v", m)
+	}
+	if spec.Cmd != nil || spec.Dir != "/build" || spec.Env["JOBS"] != "4" || spec.Env["FLAG"] != "on" || !strings.HasPrefix(spec.Env["PATH"], "/deps/greet/bin:") {
+		t.Errorf("spec: %+v", spec)
+	}
+
+	spec.Cmd = []string{"/bin/sh", "-c", "greet > /out/greet.txt; cat /src/message"}
+	cmd, err := b.Command(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := cmd.CombinedOutput()
+	if err != nil || string(got) != "v1\n" {
+		t.Errorf("command: %q, %v", got, err)
+	}
+	if data := readFile(t, filepath.Join(out, "greet.txt")); data != "greet from dep\n" {
+		t.Errorf("/out: %q", data)
+	}
+	if n := dirEntries(t, filepath.Dir(f.store.Path(store.Build, strings.Repeat("0", 64)))); n != 1 {
+		t.Errorf("shell put %d builds into the store, want only the dependency", n)
+	}
+}
+
+func TestShellErrors(t *testing.T) {
+	f := newFixture(t)
+	b := f.builder()
+	if _, err := b.Shell("allocators/sys", t.TempDir()); err == nil || !strings.Contains(err.Error(), "nothing to build") {
+		t.Errorf("sys: %v", err)
+	}
+	if _, err := b.Shell("allocators/nope", t.TempDir()); err == nil || !strings.Contains(err.Error(), "no such recipe") {
+		t.Errorf("unknown: %v", err)
+	}
+	if _, err := b.Shell("allocators/broken", t.TempDir()); err == nil || !strings.Contains(err.Error(), "environment host") {
+		t.Errorf("missing env: %v", err)
+	}
+}
+
+func TestEnvShell(t *testing.T) {
+	f := newFixture(t)
+	f.hostEnv(t)
+	spec, err := f.builder().EnvShell("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, _ := f.set.EnvHash("host")
+	if spec.Rootfs != filepath.Join(f.store.Path(store.Env, h), "rootfs") || len(spec.Mounts) != 0 || spec.Dir != "/build" || spec.Env["HOME"] != "/build" {
+		t.Errorf("spec: %+v", spec)
+	}
+	if _, err := f.builder().EnvShell("nope"); err == nil || !strings.Contains(err.Error(), "envs/nope: no such recipe") {
+		t.Errorf("unknown env: %v", err)
+	}
+}
+
+func TestCommand(t *testing.T) {
+	f := newFixture(t)
+	b := f.builder()
+	b.Bwrap = "/opt/bwrap"
+	cmd, err := b.Command(sandbox.Spec{Rootfs: "/", Cmd: []string{"/bin/true"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Path != "/opt/bwrap" || cmd.Args[len(cmd.Args)-1] != "/bin/true" {
+		t.Errorf("command: %v", cmd.Args)
+	}
+	if _, err := b.Command(sandbox.Spec{Rootfs: "/", Cmd: []string{"true"}}); err == nil {
+		t.Error("expected an error for a relative command")
 	}
 }

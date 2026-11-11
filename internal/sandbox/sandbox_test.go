@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -183,5 +184,26 @@ tail -n +3 /proc/net/dev | cut -d: -f1 | tr -d ' '
 	}
 	if data, err := os.ReadFile(filepath.Join(out, "copy")); err != nil || string(data) != "hello" {
 		t.Errorf("/out was not written: %q, %v", data, err)
+	}
+}
+
+func TestArgsInteractive(t *testing.T) {
+	root := fakeRootfs(t)
+	batch, err := Args(Spec{Rootfs: root, Cmd: []string{"/bin/sh"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	interactive, err := Args(Spec{Rootfs: root, Cmd: []string{"/bin/sh"}, Interactive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(batch, "--new-session") {
+		t.Errorf("batch sandbox has no --new-session: %v", batch)
+	}
+	if slices.Contains(interactive, "--new-session") {
+		t.Errorf("interactive sandbox has --new-session: %v", interactive)
+	}
+	if want := slices.DeleteFunc(slices.Clone(batch), func(a string) bool { return a == "--new-session" }); !reflect.DeepEqual(interactive, want) {
+		t.Errorf("interactive differs in more than --new-session:\n%v\n%v", interactive, want)
 	}
 }
