@@ -93,18 +93,52 @@ func (b *Builder) Build(ref string) (Result, error) {
 	}
 
 	b.progress("building %s", ref)
-	spec, err := b.spec(t, e, src, deps, entry.Dir)
-	if err != nil {
-		return Result{}, fmt.Errorf("%s: %w", ref, err)
-	}
-	spec.Cmd = []string{"/bin/sh", "-euc", t.build.Script}
-	if err := b.run(spec, entry.Dir, res.Log); err != nil {
-		return Result{}, fmt.Errorf("%s: %w", ref, err)
+	if err := b.runScript(ref, t, e, src, deps, entry.Dir, res.Log, b.jobs()); err != nil {
+		return Result{}, err
 	}
 	if err := entry.Commit(); err != nil {
 		return Result{}, err
 	}
 	return b.remember(res), nil
+}
+
+func (b *Builder) BuildTo(ref, out, logPath string, jobs int) (Result, error) {
+	t, err := b.target(ref)
+	if err != nil {
+		return Result{}, err
+	}
+	if t.hash == "" {
+		return Result{Recipe: ref}, nil
+	}
+	deps, err := b.deps(t)
+	if err != nil {
+		return Result{}, err
+	}
+	src, err := b.fetch(ref, t)
+	if err != nil {
+		return Result{}, err
+	}
+	e, err := b.env(ref, t.buildEnv)
+	if err != nil {
+		return Result{}, err
+	}
+	b.progress("building %s with %d jobs", ref, jobs)
+	if err := b.runScript(ref, t, e, src, deps, out, logPath, jobs); err != nil {
+		return Result{}, err
+	}
+	return Result{Recipe: ref, Hash: inputKey(t, src.Key, deps), Dir: out, Log: logPath}, nil
+}
+
+func (b *Builder) runScript(ref string, t target, e env.Env, src source.Result, deps []Result, out, logPath string, jobs int) error {
+	spec, err := b.spec(t, e, src, deps, out, jobs)
+	if err != nil {
+		return fmt.Errorf("%s: %w", ref, err)
+	}
+	spec.Cmd = []string{"/bin/sh", "-euc", t.build.Script}
+	if err := b.run(spec, out, logPath); err != nil {
+		return fmt.Errorf("%s: %w", ref, err)
+	}
+	return nil
 }
 
 func (b *Builder) Shell(ref, out string) (sandbox.Spec, error) {
@@ -127,7 +161,7 @@ func (b *Builder) Shell(ref, out string) (sandbox.Spec, error) {
 	if err != nil {
 		return sandbox.Spec{}, err
 	}
-	spec, err := b.spec(t, e, src, deps, out)
+	spec, err := b.spec(t, e, src, deps, out, b.jobs())
 	if err != nil {
 		return sandbox.Spec{}, fmt.Errorf("%s: %w", ref, err)
 	}
@@ -254,7 +288,7 @@ func inputKey(t target, srcKey string, deps []Result) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func (b *Builder) spec(t target, e env.Env, src source.Result, deps []Result, out string) (sandbox.Spec, error) {
+func (b *Builder) spec(t target, e env.Env, src source.Result, deps []Result, out string, jobs int) (sandbox.Spec, error) {
 	epoch, err := env.SnapshotEpoch(b.Set.Envs[t.buildEnv].Snapshot)
 	if err != nil {
 		return sandbox.Spec{}, err
@@ -273,7 +307,7 @@ func (b *Builder) spec(t target, e env.Env, src source.Result, deps []Result, ou
 	mounts = append(mounts, sandbox.Mount{Src: out, Dst: "/out", RW: true})
 	vars["PATH"] = path
 	vars["HOME"] = "/build"
-	vars["JOBS"] = strconv.Itoa(b.jobs())
+	vars["JOBS"] = strconv.Itoa(jobs)
 	vars["SOURCE_DATE_EPOCH"] = strconv.FormatInt(epoch, 10)
 
 	return sandbox.Spec{
