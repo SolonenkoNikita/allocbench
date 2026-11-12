@@ -438,3 +438,53 @@ func TestEnv(t *testing.T) {
 		t.Errorf("unknown env: %v", err)
 	}
 }
+
+func TestBuildTo(t *testing.T) {
+	needBwrap(t)
+	f := newFixture(t)
+	f.hostEnv(t)
+	b := f.builder()
+	var progress strings.Builder
+	b.Progress = &progress
+	out := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "build.log")
+
+	r, err := b.BuildTo("allocators/hello", out, logPath, 7)
+	if err != nil {
+		t.Fatalf("BuildTo: %v", err)
+	}
+	if r.Dir != out || r.Log != logPath || r.Cached || len(r.Hash) != 64 {
+		t.Errorf("result: %+v", r)
+	}
+	if got := readFile(t, filepath.Join(out, "lib", "message")); got != "v1\n" {
+		t.Errorf("output: %q", got)
+	}
+	if log := readFile(t, logPath); !strings.Contains(log, "jobs=7 ") {
+		t.Errorf("log:\n%s", log)
+	}
+	if f.store.Has(store.Build, r.Hash) {
+		t.Error("BuildTo put the recipe into the store")
+	}
+	if !strings.Contains(progress.String(), "building allocators/hello with 7 jobs") {
+		t.Errorf("progress:\n%s", progress.String())
+	}
+
+	built, err := f.builder().Build("allocators/hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if built.Hash != r.Hash {
+		t.Errorf("BuildTo hash %s, Build hash %s", r.Hash, built.Hash)
+	}
+}
+
+func TestBuildToNothingAndErrors(t *testing.T) {
+	f := newFixture(t)
+	r, err := f.builder().BuildTo("allocators/sys", t.TempDir(), filepath.Join(t.TempDir(), "log"), 1)
+	if err != nil || r.Hash != "" {
+		t.Errorf("sys: %+v, %v", r, err)
+	}
+	if _, err := f.builder().BuildTo("allocators/nope", t.TempDir(), filepath.Join(t.TempDir(), "log"), 1); err == nil {
+		t.Error("expected an error for an unknown recipe")
+	}
+}
