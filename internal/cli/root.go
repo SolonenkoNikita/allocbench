@@ -3,6 +3,7 @@ package cli
 import "github.com/spf13/cobra"
 
 type options struct {
+	version string
 	recipes string
 	store   string
 	mirror  string
@@ -11,7 +12,7 @@ type options struct {
 }
 
 func NewRootCommand(version string) *cobra.Command {
-	opts := &options{}
+	opts := &options{version: version}
 	cmd := &cobra.Command{
 		Use:           "allocbench",
 		Short:         "Reproducible allocator benchmarks in isolated environments",

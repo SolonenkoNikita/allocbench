@@ -16,6 +16,7 @@ import (
 	"github.com/SolonenkoNikita/allocbench/internal/cell"
 	"github.com/SolonenkoNikita/allocbench/internal/plan"
 	"github.com/SolonenkoNikita/allocbench/internal/recipe"
+	"github.com/SolonenkoNikita/allocbench/internal/results"
 )
 
 const (
@@ -24,6 +25,7 @@ const (
 	runIDFormat  = "20060102T150405Z"
 	cellsDir     = "cells"
 	bytesPerKB   = 1024
+	hostRoot     = "/"
 )
 
 type runOptions struct {
@@ -133,6 +135,7 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 	b.Jobs = ro.jobs
 
 	dirs := map[string]string{}
+	hashes := map[string]string{}
 	refs := []string{"tools/" + runnerRecipe}
 	for _, a := range p.Allocators {
 		refs = append(refs, "allocators/"+a)
@@ -146,21 +149,57 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 			return err
 		}
 		dirs[ref] = r.Dir
+		hashes[ref] = r.Hash
 	}
 	runEnv, err := b.Env(p.RunEnv)
 	if err != nil {
 		return err
 	}
 
-	dir, err := resultsDir(ro.results, time.Now())
+	started := time.Now()
+	dir, err := resultsDir(ro.results, started)
 	if err != nil {
 		return err
 	}
+	envRecipe := s.Envs[p.RunEnv]
+	manifest := results.Manifest{
+		Version: opts.version,
+		Started: started.UTC(),
+		Plan: results.Plan{
+			Allocators: p.Allocators,
+			Benches:    p.Benches,
+			Repeat:     p.Repeat,
+			Order:      p.Order,
+			Cells:      len(resolved.Cells),
+		},
+		RunEnv: results.Env{
+			Name:     p.RunEnv,
+			Distro:   envRecipe.Distro,
+			Suite:    envRecipe.Suite,
+			Snapshot: envRecipe.Snapshot,
+			Packages: envRecipe.Packages,
+			Hash:     runEnv.Hash,
+			Tree:     runEnv.Tree,
+			Mirror:   runEnv.Mirror,
+		},
+		Builds: hashes,
+		Host:   results.ReadHost(hostRoot),
+	}
+	if err := results.WriteManifest(dir, manifest); err != nil {
+		return err
+	}
+	w, err := results.Create(dir)
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+
 	ex := &cell.Executor{Rootfs: runEnv.Rootfs, Runner: dirs["tools/"+runnerRecipe]}
 	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "host: %s\n", manifest.Host)
 	fmt.Fprintf(out, "running %d cells, results in %s\n", len(resolved.Cells), dir)
 
-	var results []cell.Result
+	var done []cell.Result
 	width := len(fmt.Sprint(len(resolved.Cells)))
 	for i, c := range resolved.Cells {
 		r, err := ex.Run(cell.Input{
@@ -174,23 +213,43 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 		if err != nil {
 			return err
 		}
-		results = append(results, r)
+		done = append(done, r)
+		if err := w.Add(r); err != nil {
+			return err
+		}
 		fmt.Fprintf(out, "[%*d/%d] %-28s %-12s %8s %8s\n", width, i+1, len(resolved.Cells), c.ID(), r.Status,
 			formatDuration(r.Measure.Wall()), formatKB(r.Measure.MaxRSSKB))
 	}
 
+	finished := time.Now().UTC()
+	manifest.Finished = &finished
+	if err := results.WriteManifest(dir, manifest); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+
 	fmt.Fprintln(out)
-	if err := printSummary(out, p, results); err != nil {
+	summary, err := os.Create(filepath.Join(dir, results.SummaryFile))
+	if err != nil {
+		return err
+	}
+	defer summary.Close()
+	if err := printSummary(io.MultiWriter(out, summary), p, done); err != nil {
+		return err
+	}
+	if err := summary.Close(); err != nil {
 		return err
 	}
 	failed := 0
-	for _, r := range results {
+	for _, r := range done {
 		if !r.OK() {
 			failed++
 		}
 	}
 	if failed > 0 {
-		return fmt.Errorf("%d of %d cells failed, see %s", failed, len(results), filepath.Join(dir, cellsDir))
+		return fmt.Errorf("%d of %d cells failed, see %s", failed, len(done), filepath.Join(dir, cellsDir))
 	}
 	return nil
 }
