@@ -30,6 +30,6 @@ func NewRootCommand(version string) *cobra.Command {
 	flags.StringVar(&opts.mirror, "mirror", "", "package mirror instead of the snapshot from the env recipe")
 	flags.StringVar(&opts.proxy, "proxy", proxyFromEnv(), "HTTP proxy for package downloads")
 	flags.BoolVarP(&opts.verbose, "verbose", "v", false, "show build and environment output")
-	cmd.AddCommand(newListCommand(opts), newBuildCommand(opts), newShellCommand(opts), newRunCommand(opts))
+	cmd.AddCommand(newListCommand(opts), newBuildCommand(opts), newShellCommand(opts), newRunCommand(opts), newLockCommand(opts))
 	return cmd
 }

@@ -131,7 +131,11 @@ func (b *Builder) mirror(e recipe.Env) string {
 	if b.Mirror != "" {
 		return b.Mirror
 	}
-	return "https://snapshot.ubuntu.com/ubuntu/" + e.Snapshot
+	return SnapshotMirror(e.Snapshot)
+}
+
+func SnapshotMirror(snapshot string) string {
+	return "https://snapshot.ubuntu.com/ubuntu/" + snapshot
 }
 
 func (b *Builder) mmdebstrap() string {
