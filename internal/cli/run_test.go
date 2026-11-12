@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -296,6 +297,32 @@ func TestRunCommand(t *testing.T) {
 		}
 	}
 
+	runs, _ := filepath.Glob(filepath.Join(results, "*"))
+	if len(runs) != 1 {
+		t.Fatalf("runs: %v", runs)
+	}
+	var manifest map[string]any
+	data, err := os.ReadFile(filepath.Join(runs[0], "manifest.json"))
+	if err != nil || json.Unmarshal(data, &manifest) != nil {
+		t.Fatalf("manifest: %v\n%s", err, data)
+	}
+	builds := manifest["builds"].(map[string]any)
+	if manifest["finished"] == nil || builds["allocators/sys"] != "" || len(builds["allocators/hello"].(string)) != 64 || len(builds["tools/runner"].(string)) != 64 {
+		t.Errorf("manifest:\n%s", data)
+	}
+	if env := manifest["run_env"].(map[string]any); env["name"] != "host" || len(env["hash"].(string)) != 64 {
+		t.Errorf("run_env: %v", env)
+	}
+	if lines := strings.Count(readText(t, filepath.Join(runs[0], "results.jsonl")), "\n"); lines != 8 {
+		t.Errorf("results.jsonl has %d lines", lines)
+	}
+	if lines := strings.Count(readText(t, filepath.Join(runs[0], "results.csv")), "\n"); lines != 9 {
+		t.Errorf("results.csv has %d lines", lines)
+	}
+	if summary := readText(t, filepath.Join(runs[0], "summary.txt")); !strings.HasPrefix(summary, "BENCH") || !strings.Contains(out, summary) {
+		t.Errorf("summary.txt:\n%s", summary)
+	}
+
 	stdouts, _ := filepath.Glob(filepath.Join(results, "*", "cells", "echo", "hello", "t2", "r1", "stdout"))
 	if len(stdouts) != 1 {
 		t.Fatalf("cell dirs: %v", stdouts)
@@ -325,4 +352,13 @@ func TestRunCommandNoRunner(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "tools/runner: no such recipe, it builds the runner") {
 		t.Fatalf("got %v\n%s", err, out)
 	}
+}
+
+func readText(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
