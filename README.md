@@ -53,52 +53,31 @@ Docker и bash-скрипты не используются.
 ```mermaid
 flowchart TB
     Recipes[/"recipes/*.toml"/]
+    Plan["recipe + plan<br/>разбор, проверка, хеши,<br/>сборки и ячейки замеров"]
 
-    subgraph Go["allocbench (Go)"]
-        Recipe["recipe<br/>разбор, extends, проверка, хеши"]
-        Plan["plan<br/>порядок сборок, ячейки замеров"]
-        Build["build<br/>сборка рецепта"]
-        Run["run<br/>запуск ячеек"]
-        Source["source<br/>git · url · локальный путь"]
-        Env["env<br/>mmdebstrap → rootfs"]
-        Sandbox["sandbox<br/>аргументы bwrap"]
+    subgraph BuildStage["allocbench build"]
+        direction LR
+        Source["source<br/>git · url · путь"] --> Env["env<br/>mmdebstrap → rootfs"] --> BuildBox["песочница сборки<br/>/src → /out"]
     end
 
-    subgraph Store["store/ — адресация по хешу"]
-        Src[("src/‹ключ›")]
-        Envs[("env/‹хеш›/rootfs")]
-        Builds[("build/‹хеш›")]
+    Store[("store/<br/>src · env · build")]
+
+    subgraph RunStage["allocbench run"]
+        direction LR
+        RunBox["песочница запуска<br/>/alloc · /bench · /runner"] --> Runner["runner (C)<br/>fork/exec → тест"]
     end
 
-    subgraph Bwrap["песочница bwrap — новая на каждое действие"]
-        BuildBox["сборка<br/>rootfs · /src · /deps — только чтение<br/>/build · /out — запись"]
-        RunBox["запуск<br/>rootfs · /alloc · /bench · /runner — только чтение<br/>runner (C) → fork/exec → тест"]
-    end
+    Results[/"results/<br/>manifest · jsonl · csv"/]
 
-    Results[/"results/ — замеры в JSON"/]
-
-    Recipes --> Recipe --> Plan
-    Plan --> Build
-    Plan --> Run
-    Build --> Source --> Src
-    Build --> Env --> Envs
-    Build --> Sandbox
-    Run --> Sandbox
-    Sandbox --> BuildBox
-    Sandbox --> RunBox
-    Src -.-> BuildBox
-    Envs -.-> BuildBox
-    Envs -.-> RunBox
-    BuildBox --> Builds
-    Builds -.-> RunBox
-    RunBox --> Results
+    Recipes --> Plan --> BuildStage --> Store --> RunStage --> Results
 ```
 
-Сплошные стрелки — вызовы и запись результата, пунктир — каталоги, которые монтируются в песочницу.
+Сборка кладёт результаты в хранилище по хешу входов, прогон берёт их оттуда.
+Каждая песочница — и сборки, и запуска — создаётся заново на одно действие: в ней только rootfs окружения (только чтение) и нужные этому действию каталоги.
 
 | Компонент | Где | Что делает |
 | :--- | :--- | :--- |
-| CLI | `cmd/allocbench`, `internal/cli` | команды `list`, `build`, `shell` |
+| CLI | `cmd/allocbench`, `internal/cli` | команды `list`, `build`, `shell`, `run`, `lock` |
 | Рецепты | `internal/recipe` | разбор TOML, `extends`, проверка полей, входные хеши |
 | План | `internal/plan` | порядок сборок с учётом зависимостей, ячейки замеров |
 | Хранилище | `internal/store` | адресация по хешу, блокировки, атомарная запись |
@@ -107,6 +86,9 @@ flowchart TB
 | Песочница | `internal/sandbox` | сборка аргументов `bwrap` |
 | Сборка | `internal/build` | зависимости → исходники → окружение → песочница → хранилище |
 | Раннер | `runner/runner.c`, `internal/runner` | замер одного запуска, протокол JSON |
+| Ячейка | `internal/cell` | песочница запуска, `LD_PRELOAD`, таймаут, проверка вывода |
+| Результаты | `internal/results` | `manifest.json`, `results.jsonl`, `results.csv`, сведения о машине |
+| Lock-файл | `internal/lock` | хеши окружений и сборок, сверка с `allocbench.lock` |
 
 ---
 
@@ -391,6 +373,7 @@ results/20261112T200539Z/
 | `allocbench build <рецепт>...` | собрать рецепты и их зависимости; рецепт — `mi` или `allocators/mi` |
 | `allocbench shell <рецепт> [-- команда]` | оболочка в песочнице сборки рецепта или в окружении |
 | `allocbench run` | собрать всё нужное плану и выполнить ячейки; флаги `--plan`, `--alloc`, `--bench`, `--run-env`, `--repeat`, `--order`, `--results` |
+| `allocbench lock [рецепт]...` | записать хеши окружений и сборок в `allocbench.lock`; с `--check` — сверить с ним |
 
 Общие флаги:
 
