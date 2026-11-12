@@ -134,11 +134,15 @@ func (b *Builder) Shell(ref, out string) (sandbox.Spec, error) {
 	return spec, nil
 }
 
-func (b *Builder) EnvShell(name string) (sandbox.Spec, error) {
+func (b *Builder) Env(name string) (env.Env, error) {
 	if _, ok := b.Set.Envs[name]; !ok {
-		return sandbox.Spec{}, fmt.Errorf("envs/%s: no such recipe", name)
+		return env.Env{}, fmt.Errorf("envs/%s: no such recipe", name)
 	}
-	e, err := b.env("envs/"+name, name)
+	return b.env("envs/"+name, name)
+}
+
+func (b *Builder) EnvShell(name string) (sandbox.Spec, error) {
+	e, err := b.Env(name)
 	if err != nil {
 		return sandbox.Spec{}, err
 	}
