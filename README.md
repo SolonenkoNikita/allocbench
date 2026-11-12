@@ -15,8 +15,9 @@ Docker и bash-скрипты не используются.
 5. [Быстрый старт](#быстрый-старт)
 6. [Рецепты](#рецепты)
 7. [Хранилище](#хранилище)
-8. [Команды](#команды)
-9. [Разработка](#разработка)
+8. [Прогон и результаты](#прогон-и-результаты)
+9. [Команды](#команды)
+10. [Разработка](#разработка)
 
 ---
 
@@ -179,6 +180,26 @@ allocators/sys  nothing to build  -             -
 ./allocbench shell gcc13                   # только окружение
 ```
 
+Сравнить аллокаторы. `run` сам соберёт всё недостающее и выполнит каждую ячейку в новой песочнице:
+
+```bash
+$ ./allocbench run --alloc sys,mi --bench cfrac --repeat 3
+host: Intel(R) Core(TM) i5-10310U CPU @ 1.70GHz, 8 CPUs, amd64, kernel 6.14.0-36-generic
+running 6 cells, results in results/20261112T200539Z
+[1/6] cfrac/sys/t1/r0              ok             8.401s   3.1 MB
+[2/6] cfrac/mi/t1/r0               ok             7.615s   3.0 MB
+[3/6] cfrac/sys/t1/r1              ok             8.395s   2.9 MB
+[4/6] cfrac/mi/t1/r1               ok             7.648s   2.9 MB
+[5/6] cfrac/sys/t1/r2              ok             8.305s   3.0 MB
+[6/6] cfrac/mi/t1/r2               ok             7.598s   2.9 MB
+
+BENCH  THREADS  ALLOC  OK   MEDIAN  MIN     MAX     RELATIVE  MAX RSS
+cfrac  1        sys    3/3  8.395s  8.305s  8.401s  1.00      3.0 MB
+cfrac  1        mi     3/3  7.615s  7.598s  7.648s  0.91      2.9 MB
+```
+
+`RELATIVE` — медиана времени относительно первого аллокатора в списке: удобно ставить `sys` первым.
+
 ---
 
 ## Рецепты
@@ -308,6 +329,60 @@ store/
 
 ---
 
+## Прогон и результаты
+
+Ячейка — один замер: аллокатор × тест × число потоков × номер повтора.
+Каждая ячейка выполняется в новой песочнице. Раннер на C запускает тест, передаёт только ему `LD_PRELOAD` и переменные аллокатора и меряет время, пиковую память и page faults.
+
+По умолчанию ячейки чередуются (`sys`, `mi`, `sys`, `mi`, …), чтобы медленный дрейф машины не доставался одному аллокатору.
+Упавший тест, таймаут или неверный вывод не прерывают прогон: ячейка получает статус, а команда в конце завершается с ошибкой.
+
+План можно задать флагами или файлом, флаги переопределяют файл:
+
+```toml
+allocators = ["sys", "mi"]
+benches    = ["cfrac"]
+run_env    = "gcc13"
+repeat     = 5
+order      = "interleaved"
+```
+
+```bash
+./allocbench run --plan plan.toml
+./allocbench run --plan plan.toml --repeat 10
+./allocbench run --alloc all --bench all
+```
+
+Результаты складываются в `results/<время UTC>/`:
+
+```
+results/20261112T200539Z/
+├── manifest.json        версия allocbench, план, окружение запуска, хеши всех сборок, параметры машины
+├── results.jsonl        одна строка JSON на ячейку
+├── results.csv          то же таблицей, для графиков
+├── summary.txt          сводка, как в терминале
+└── cells/cfrac/mi/t1/r0/
+    ├── stdout, stderr   вывод теста
+    ├── result.json      замер раннера
+    └── sandbox.log      вывод песочницы
+```
+
+Поля замера:
+
+| Поле | Описание |
+| :--- | :--- |
+| `status` | `ok`, `exit code N`, `killed by signal N`, `timeout`, `exec error: …`, `wrong output` |
+| `wall_ns` | реальное время выполнения |
+| `user_us`, `sys_us` | время CPU в пространстве пользователя и в ядре |
+| `max_rss_kb` | пиковая резидентная память |
+| `minflt`, `majflt` | page faults без чтения с диска и с чтением |
+| `nvcsw`, `nivcsw` | добровольные и принудительные переключения контекста |
+| `stdout_sha256` | хеш вывода; сверяется с `check.stdout_sha256` рецепта |
+
+В `manifest.json` записываются ядро, модель CPU, число ядер, объём памяти, режим transparent huge pages, `cpu governor` и `overcommit_memory`: rootfs их не фиксирует, а на результат они влияют.
+
+---
+
 ## Команды
 
 | Команда | Описание |
@@ -315,6 +390,7 @@ store/
 | `allocbench list` | таблица рецептов с входными хешами |
 | `allocbench build <рецепт>...` | собрать рецепты и их зависимости; рецепт — `mi` или `allocators/mi` |
 | `allocbench shell <рецепт> [-- команда]` | оболочка в песочнице сборки рецепта или в окружении |
+| `allocbench run` | собрать всё нужное плану и выполнить ячейки; флаги `--plan`, `--alloc`, `--bench`, `--run-env`, `--repeat`, `--order`, `--results` |
 
 Общие флаги:
 
