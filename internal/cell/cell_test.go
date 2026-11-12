@@ -350,3 +350,49 @@ func TestRunSandboxError(t *testing.T) {
 		t.Errorf("got %v", err)
 	}
 }
+
+func TestRunIncompatible(t *testing.T) {
+	cc, err := exec.LookPath("cc")
+	if err != nil {
+		t.Skip("no C compiler")
+	}
+	benchDir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "prog.c")
+	writeFile(t, src, "int main(void) { return 0; }\n", 0o644)
+	os.MkdirAll(filepath.Join(benchDir, "bin"), 0o755)
+	if out, err := exec.Command(cc, "-o", filepath.Join(benchDir, "bin", "prog"), src).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+
+	e := &Executor{Rootfs: t.TempDir(), Runner: "/r", Bwrap: "/nonexistent/bwrap"}
+	in := Input{Cell: cell("sys"), Bench: recipe.Bench{Run: recipe.Run{Cmd: []string{"/bench/bin/prog"}}}, BenchDir: benchDir, Out: filepath.Join(t.TempDir(), "cell")}
+	r, err := e.Run(in)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.HasPrefix(r.Status, "incompatible: /bench/bin/prog: needs libc.so.6, not in the run environment") || r.OK() {
+		t.Errorf("status: %q", r.Status)
+	}
+	if got := read(t, r.Dir, "incompatible.txt"); !strings.HasPrefix(got, "/bench/bin/prog: needs libc.so.6") {
+		t.Errorf("incompatible.txt: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(r.Dir, "result.json")); !os.IsNotExist(err) {
+		t.Error("an incompatible cell was run")
+	}
+
+	os.Remove(filepath.Join(benchDir, "bin", "prog"))
+	problems, err := e.Compatibility(in)
+	if err != nil || len(problems) == 0 {
+		t.Errorf("the check is not cached: %v, %v", problems, err)
+	}
+}
+
+func TestCompatibilityOfScripts(t *testing.T) {
+	bench := t.TempDir()
+	writeFile(t, filepath.Join(bench, "bin", "bench"), benchScript, 0o755)
+	e := &Executor{Rootfs: t.TempDir()}
+	problems, err := e.Compatibility(Input{BenchDir: bench})
+	if err != nil || len(problems) != 0 {
+		t.Errorf("a shell script is checked as ELF: %v, %v", problems, err)
+	}
+}
