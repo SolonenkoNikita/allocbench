@@ -259,3 +259,9 @@ func TestEnsureLogCopy(t *testing.T) {
 		t.Errorf("Log writer got %q", out.String())
 	}
 }
+
+func TestSnapshotMirror(t *testing.T) {
+	if got := SnapshotMirror("20260101T000000Z"); got != "https://snapshot.ubuntu.com/ubuntu/20260101T000000Z" {
+		t.Errorf("got %q", got)
+	}
+}
