@@ -422,3 +422,19 @@ func TestCommand(t *testing.T) {
 		t.Error("expected an error for a relative command")
 	}
 }
+
+func TestEnv(t *testing.T) {
+	f := newFixture(t)
+	f.hostEnv(t)
+	e, err := f.builder().Env("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, _ := f.set.EnvHash("host")
+	if e.Hash != h || e.Rootfs != filepath.Join(f.store.Path(store.Env, h), "rootfs") {
+		t.Errorf("env: %+v", e)
+	}
+	if _, err := f.builder().Env("nope"); err == nil || !strings.Contains(err.Error(), "envs/nope: no such recipe") {
+		t.Errorf("unknown env: %v", err)
+	}
+}
