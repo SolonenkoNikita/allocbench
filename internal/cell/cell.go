@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SolonenkoNikita/allocbench/internal/elfcheck"
 	"github.com/SolonenkoNikita/allocbench/internal/plan"
 	"github.com/SolonenkoNikita/allocbench/internal/recipe"
 	"github.com/SolonenkoNikita/allocbench/internal/runner"
@@ -21,12 +22,13 @@ import (
 )
 
 const (
-	DefaultTimeout    = 10 * time.Minute
-	ThreadsVar        = "THREADS"
-	ThreadsMark       = "{threads}"
-	WorkDisk          = "disk"
-	StatusOK          = "ok"
-	StatusWrongOutput = "wrong output"
+	DefaultTimeout     = 10 * time.Minute
+	ThreadsVar         = "THREADS"
+	ThreadsMark        = "{threads}"
+	WorkDisk           = "disk"
+	StatusOK           = "ok"
+	StatusWrongOutput  = "wrong output"
+	StatusIncompatible = "incompatible"
 
 	allocDir   = "/alloc"
 	benchDir   = "/bench"
@@ -39,6 +41,7 @@ const (
 	stderrFile  = "stderr"
 	resultFile  = "result.json"
 	sandboxFile = "sandbox.log"
+	problemFile = "incompatible.txt"
 	workSubdir  = "work"
 )
 
@@ -46,6 +49,9 @@ type Executor struct {
 	Rootfs string
 	Runner string
 	Bwrap  string
+
+	checker  *elfcheck.Checker
+	problems map[string][]elfcheck.Problem
 }
 
 type Input struct {
@@ -78,6 +84,14 @@ func (e *Executor) Run(in Input) (Result, error) {
 		return Result{}, err
 	}
 	in.Out = out
+
+	problems, err := e.Compatibility(in)
+	if err != nil {
+		return Result{}, fmt.Errorf("%s: %w", in.Cell.ID(), err)
+	}
+	if len(problems) > 0 {
+		return e.incompatible(in, problems)
+	}
 
 	spec, cleanup, err := e.Spec(in)
 	if err != nil {
@@ -121,6 +135,48 @@ func (e *Executor) Run(in Input) (Result, error) {
 		res.Status = StatusWrongOutput
 	}
 	return res, nil
+}
+
+func (e *Executor) Compatibility(in Input) ([]elfcheck.Problem, error) {
+	if e.checker == nil {
+		e.checker = &elfcheck.Checker{Root: e.Rootfs}
+		e.problems = map[string][]elfcheck.Problem{}
+	}
+	var all []elfcheck.Problem
+	for _, d := range []struct{ dir, mount string }{{in.AllocDir, allocDir}, {in.BenchDir, benchDir}} {
+		if d.dir == "" {
+			continue
+		}
+		problems, ok := e.problems[d.dir]
+		if !ok {
+			var err error
+			problems, err = e.checker.CheckDir(d.dir)
+			if err != nil {
+				return nil, err
+			}
+			e.problems[d.dir] = problems
+		}
+		for _, p := range problems {
+			p.File = path.Join(d.mount, p.File)
+			all = append(all, p)
+		}
+	}
+	return all, nil
+}
+
+func (e *Executor) incompatible(in Input, problems []elfcheck.Problem) (Result, error) {
+	var text strings.Builder
+	for _, p := range problems {
+		fmt.Fprintln(&text, p)
+	}
+	if err := os.WriteFile(filepath.Join(in.Out, problemFile), []byte(text.String()), 0o644); err != nil {
+		return Result{}, err
+	}
+	status := StatusIncompatible + ": " + problems[0].String()
+	if len(problems) > 1 {
+		status += fmt.Sprintf(" and %d more", len(problems)-1)
+	}
+	return Result{Cell: in.Cell, Status: status, Dir: in.Out}, nil
 }
 
 func (e *Executor) Spec(in Input) (sandbox.Spec, func(), error) {
