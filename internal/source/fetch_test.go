@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"github.com/SolonenkoNikita/allocbench/internal/proc"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/SolonenkoNikita/allocbench/internal/recipe"
 	"github.com/SolonenkoNikita/allocbench/internal/store"
@@ -184,6 +187,66 @@ func TestFetchGitUnknownRev(t *testing.T) {
 	}
 	if n := srcEntries(t, f); n != 0 {
 		t.Errorf("failed fetch left %d store entries", n)
+	}
+}
+
+func interruptAfter(delay time.Duration) context.Context {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	time.AfterFunc(delay, func() { cancel(proc.ErrInterrupted) })
+	return ctx
+}
+
+func tmpEntries(t *testing.T, f *Fetcher) int {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(filepath.Dir(filepath.Dir(f.Store.Path(store.Src, strings.Repeat("0", 64)))), "tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(entries)
+}
+
+func TestFetchGitInterrupted(t *testing.T) {
+	f := newFetcher(t)
+	f.Git = filepath.Join(t.TempDir(), "git")
+	writeFile(t, f.Git, "#!/bin/sh\nexec sleep 30\n", 0o755)
+
+	start := time.Now()
+	_, err := f.Fetch(interruptAfter(200*time.Millisecond), recipe.Source{Git: "https://example.invalid/repo.git", Rev: strings.Repeat("a", 40)})
+	if !errors.Is(err, proc.ErrInterrupted) || err.Error() != "interrupted" {
+		t.Errorf("Fetch: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("stopped after %v", elapsed)
+	}
+	if n, tmp := srcEntries(t, f), tmpEntries(t, f); n != 0 || tmp != 0 {
+		t.Errorf("store %d, tmp %d", n, tmp)
+	}
+}
+
+func TestFetchURLInterrupted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/partial.tar" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("partial"))
+			w.(http.Flusher).Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	for _, name := range []string{"/headers.tar", "/partial.tar"} {
+		f := newFetcher(t)
+		start := time.Now()
+		_, err := f.Fetch(interruptAfter(200*time.Millisecond), recipe.Source{URL: srv.URL + name, SHA256: strings.Repeat("0", 64)})
+		if !errors.Is(err, proc.ErrInterrupted) || err.Error() != "interrupted" {
+			t.Errorf("%s: %v", name, err)
+		}
+		if elapsed := time.Since(start); elapsed > 10*time.Second {
+			t.Errorf("%s: stopped after %v", name, elapsed)
+		}
+		if n, tmp := srcEntries(t, f), tmpEntries(t, f); n != 0 || tmp != 0 {
+			t.Errorf("%s: store %d, tmp %d", name, n, tmp)
+		}
 	}
 }
 

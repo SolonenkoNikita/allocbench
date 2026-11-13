@@ -3,12 +3,15 @@ package env
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/SolonenkoNikita/allocbench/internal/proc"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/SolonenkoNikita/allocbench/internal/recipe"
 	"github.com/SolonenkoNikita/allocbench/internal/source"
@@ -89,6 +92,7 @@ echo call >> "$dir/calls"
 printf '%s\n' "$@" > "$dir/args"
 echo "$SOURCE_DATE_EPOCH" > "$dir/epoch"
 [ -f "$dir/fail" ] && { echo "E: download failed" >&2; exit 1; }
+[ -f "$dir/hang" ] && exec sleep 30
 out=""
 for a in "$@"; do case "$a" in *.tar) out=$a ;; esac; done
 tar -cf "$out" -C "$dir/tree" .
@@ -138,6 +142,32 @@ func (f *fake) calls(t *testing.T) int {
 		t.Fatal(err)
 	}
 	return strings.Count(string(data), "call")
+}
+
+func TestEnsureInterrupted(t *testing.T) {
+	f := newFake(t)
+	os.WriteFile(filepath.Join(f.dir, "hang"), nil, 0o644)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	time.AfterFunc(200*time.Millisecond, func() { cancel(proc.ErrInterrupted) })
+
+	start := time.Now()
+	_, err := f.b.Ensure(ctx, testEnv, testHash)
+	if !errors.Is(err, proc.ErrInterrupted) || err.Error() != "interrupted" {
+		t.Errorf("Ensure: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("stopped after %v", elapsed)
+	}
+	if f.b.Store.Has(store.Env, testHash) {
+		t.Error("interrupted env is in the store")
+	}
+	root := filepath.Dir(filepath.Dir(f.b.Store.Path(store.Env, testHash)))
+	if entries, _ := os.ReadDir(filepath.Join(root, "tmp")); len(entries) != 0 {
+		t.Errorf("tmp is not cleaned: %d entries", len(entries))
+	}
+	if _, err := os.Stat(f.b.Store.Log(store.Env, testHash)); err != nil {
+		t.Errorf("log: %v", err)
+	}
 }
 
 func TestEnsure(t *testing.T) {

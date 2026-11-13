@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/SolonenkoNikita/allocbench/internal/proc"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -513,6 +516,75 @@ func TestRunCommandFailedCells(t *testing.T) {
 	}
 	if !strings.Contains(out, "fails/sys/t1/r0") || !strings.Contains(out, "exit code 1") || !strings.Contains(out, "fails  1        sys    0/1") {
 		t.Errorf("output:\n%s", out)
+	}
+}
+
+func runCLIContext(t *testing.T, ctx context.Context, args ...string) (string, error) {
+	t.Helper()
+	cmd := NewRootCommand("dev")
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs(args)
+	err := cmd.ExecuteContext(ctx)
+	return out.String(), err
+}
+
+func TestRunCommandInterrupted(t *testing.T) {
+	dir, recipes, storeDir := runProject(t)
+	stubConditions(t)
+	os.WriteFile(filepath.Join(recipes, "benches", "slow.toml"), []byte(`run.cmd = ["/bin/sleep", "30"]`+"\n"), 0o644)
+	results := filepath.Join(dir, "results")
+	args := []string{"run", "--recipes", recipes, "--store", storeDir, "--results", results, "--alloc", "sys", "--bench", "echo,slow"}
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	go func() {
+		for ctx.Err() == nil {
+			if found, _ := filepath.Glob(filepath.Join(results, "*", "cells", "slow")); len(found) > 0 {
+				time.Sleep(200 * time.Millisecond)
+				cancel(proc.ErrInterrupted)
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	start := time.Now()
+	out, err := runCLIContext(t, ctx, args...)
+	if err == nil || !strings.HasPrefix(err.Error(), "interrupted after 2 of 3 cells, results in "+results) {
+		t.Fatalf("got %v\n%s", err, out)
+	}
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
+		t.Errorf("stopped after %v", elapsed)
+	}
+	if !strings.Contains(out, "[2/3] echo/sys/t2/r0") || strings.Contains(out, "[3/3]") || !strings.Contains(out, "echo   2        sys    1/1") {
+		t.Errorf("output:\n%s", out)
+	}
+
+	manifest := readManifest(t, results)
+	if manifest["interrupted"] != true || manifest["finished"] == nil {
+		t.Errorf("manifest: %v", manifest)
+	}
+	runs, _ := filepath.Glob(filepath.Join(results, "*"))
+	if lines := strings.Count(readText(t, filepath.Join(runs[0], "results.jsonl")), "\n"); lines != 2 {
+		t.Errorf("results.jsonl has %d lines", lines)
+	}
+	if _, err := os.Stat(filepath.Join(runs[0], "cells", "slow", "sys", "t1", "r0")); !os.IsNotExist(err) {
+		t.Errorf("interrupted cell is kept: %v", err)
+	}
+	if summary := readText(t, filepath.Join(runs[0], "summary.txt")); !strings.Contains(summary, "echo") || strings.Contains(summary, "slow") {
+		t.Errorf("summary.txt:\n%s", summary)
+	}
+
+	stopped, stop := context.WithCancelCause(context.Background())
+	stop(proc.ErrInterrupted)
+	os.RemoveAll(results)
+	out, err = runCLIContext(t, stopped, args...)
+	if err == nil || !strings.HasPrefix(err.Error(), "interrupted before the first cell finished") {
+		t.Fatalf("before the first cell: %v\n%s", err, out)
+	}
+	if manifest := readManifest(t, results); manifest["interrupted"] != true {
+		t.Errorf("manifest: %v", manifest)
 	}
 }
 

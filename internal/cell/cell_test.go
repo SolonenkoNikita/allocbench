@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"github.com/SolonenkoNikita/allocbench/internal/proc"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -343,6 +345,22 @@ func TestRunFailures(t *testing.T) {
 	r := w.run(t, "sys", b)
 	if r.Status != "timeout" || !r.Measure.TimedOut || time.Since(start) > 10*time.Second {
 		t.Errorf("hang: %+v after %v", r, time.Since(start))
+	}
+}
+
+func TestRunInterrupted(t *testing.T) {
+	w := newWorld(t)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	time.AfterFunc(300*time.Millisecond, func() { cancel(proc.ErrInterrupted) })
+	in := Input{Cell: cell("sys"), Bench: recipe.Bench{Run: recipe.Run{Cmd: []string{"/bin/sleep", "30"}}}, BenchDir: w.bench, Out: t.TempDir()}
+
+	start := time.Now()
+	_, err := w.exec.Run(ctx, in)
+	if !errors.Is(err, proc.ErrInterrupted) || err.Error() != "fake/sys/t4/r2: interrupted" {
+		t.Errorf("Run: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("stopped after %v", elapsed)
 	}
 }
 

@@ -2,11 +2,14 @@ package build
 
 import (
 	"context"
+	"errors"
+	"github.com/SolonenkoNikita/allocbench/internal/proc"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/SolonenkoNikita/allocbench/internal/env"
 	"github.com/SolonenkoNikita/allocbench/internal/recipe"
@@ -248,6 +251,34 @@ func TestBuildFailure(t *testing.T) {
 	}
 	if n := dirEntries(t, filepath.Dir(f.store.Path(store.Build, strings.Repeat("0", 64)))); n != 0 {
 		t.Errorf("failed build is in the store: %d entries", n)
+	}
+	if n := dirEntries(t, filepath.Join(filepath.Dir(filepath.Dir(f.store.Path(store.Build, strings.Repeat("0", 64)))), "tmp")); n != 0 {
+		t.Errorf("tmp is not cleaned: %d entries", n)
+	}
+}
+
+func TestBuildInterrupted(t *testing.T) {
+	needBwrap(t)
+	f := newFixture(t)
+	f.hostEnv(t)
+	f.set.Allocators["slow"] = recipe.Allocator{
+		BuildEnv: "host",
+		Source:   recipe.Source{Path: "src/hello"},
+		Build:    recipe.Build{Script: "touch /out/partial\nsleep 30"},
+	}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	time.AfterFunc(300*time.Millisecond, func() { cancel(proc.ErrInterrupted) })
+
+	start := time.Now()
+	_, err := f.builder().Build(ctx, "allocators/slow")
+	if !errors.Is(err, proc.ErrInterrupted) || err.Error() != "allocators/slow: interrupted" {
+		t.Errorf("Build: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("stopped after %v", elapsed)
+	}
+	if n := dirEntries(t, filepath.Dir(f.store.Path(store.Build, strings.Repeat("0", 64)))); n != 0 {
+		t.Errorf("interrupted build is in the store: %d entries", n)
 	}
 	if n := dirEntries(t, filepath.Join(filepath.Dir(filepath.Dir(f.store.Path(store.Build, strings.Repeat("0", 64)))), "tmp")); n != 0 {
 		t.Errorf("tmp is not cleaned: %d entries", n)
