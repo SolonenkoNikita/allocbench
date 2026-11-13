@@ -110,6 +110,36 @@ grep -q "^$USER:" /etc/subuid || echo "$USER:231072:65536" | sudo tee -a /etc/su
 
 Root не нужен ни для сборки окружений, ни для сборок, ни для запусков.
 
+Подходит ли машина, показывает `allocbench doctor`:
+
+```bash
+$ ./allocbench doctor
+ok       kernel           6.14.0-36-generic
+ok       bwrap            /usr/bin/bwrap
+ok       mmdebstrap       /usr/bin/mmdebstrap
+ok       git              /usr/bin/git
+ok       user namespaces  bwrap creates sandboxes
+ok       /etc/subuid      user:231072:65536
+ok       /etc/subgid      user:231072:65536
+warning  cpu governor     powersave on 8 of 8 CPUs, the frequency follows the load
+                          fix: echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+warning  turbo boost      enabled, the frequency depends on temperature
+                          fix: echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
+ok       core dumps       core
+ok       huge pages       madvise
+ok       memory           4.4 GB available
+ok       load             0.31 over the last minute
+ok       power            on mains
+2 of 14 checks gave warnings, measurements will be noisy
+```
+
+Проверки бывают двух уровней:
+
+- **error** — allocbench на этой машине работать не сможет: нет `bwrap`, `mmdebstrap` или `git`, ядро старше 5.3, выключены непривилегированные user namespaces, нет диапазона в `/etc/subuid` или `/etc/subgid`. Команда завершается с ошибкой.
+- **warning** — работать можно, но замеры будут шумными: регулятор частоты не `performance`, включён турбобуст, падения передаются в apport или другой обработчик, THP в режиме `always`, свободно меньше 2 ГБ памяти, загрузка выше 1, ноутбук работает от батареи.
+
+Под каждой проблемой стоит команда, которая её исправляет. Настройки частоты и THP сбрасываются при перезагрузке.
+
 ---
 
 ## Быстрый старт
@@ -421,6 +451,7 @@ benches/cfrac: reproducible, out e362c4a97aa8, same as the store
 | `allocbench run` | собрать всё нужное плану и выполнить ячейки; флаги `--plan`, `--alloc`, `--bench`, `--run-env`, `--repeat`, `--order`, `--results` |
 | `allocbench lock [рецепт]...` | записать хеши окружений и сборок в `allocbench.lock`; с `--check` — сверить с ним |
 | `allocbench verify [рецепт]...` | собрать дважды и сравнить результаты по файлам |
+| `allocbench doctor` | проверить, подходит ли машина для сборок и замеров |
 
 Общие флаги:
 
