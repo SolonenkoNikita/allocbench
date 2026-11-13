@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -46,7 +47,7 @@ func newLockCommand(opts *options) *cobra.Command {
 				lockPath = filepath.Join(filepath.Dir(recipes), lock.FileName)
 			}
 
-			got, warnings, err := collectLock(opts, s, cmd.ErrOrStderr(), builds, envs)
+			got, warnings, err := collectLock(cmd.Context(), opts, s, cmd.ErrOrStderr(), builds, envs)
 			if err != nil {
 				return err
 			}
@@ -151,7 +152,7 @@ func buildEnvOf(s *recipe.Set, kind, name string) string {
 	return ""
 }
 
-func collectLock(opts *options, s *recipe.Set, progress io.Writer, builds, envs []string) (*lock.File, []string, error) {
+func collectLock(ctx context.Context, opts *options, s *recipe.Set, progress io.Writer, builds, envs []string) (*lock.File, []string, error) {
 	b, err := newBuilder(opts, s, progress)
 	if err != nil {
 		return nil, nil, err
@@ -159,7 +160,7 @@ func collectLock(opts *options, s *recipe.Set, progress io.Writer, builds, envs 
 	got := lock.New()
 	var warnings []string
 	for _, ref := range builds {
-		r, err := b.Build(ref)
+		r, err := b.Build(ctx, ref)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -173,7 +174,7 @@ func collectLock(opts *options, s *recipe.Set, progress io.Writer, builds, envs 
 		got.Builds[ref] = lock.Build{Hash: r.Hash, Out: out}
 	}
 	for _, name := range envs {
-		e, err := b.Env(name)
+		e, err := b.Env(ctx, name)
 		if err != nil {
 			return nil, nil, err
 		}

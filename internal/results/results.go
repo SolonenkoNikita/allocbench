@@ -23,14 +23,15 @@ const (
 )
 
 type Manifest struct {
-	Version  string            `json:"allocbench_version"`
-	Started  time.Time         `json:"started"`
-	Finished *time.Time        `json:"finished,omitempty"`
-	Plan     Plan              `json:"plan"`
-	RunEnv   Env               `json:"run_env"`
-	Builds   map[string]string `json:"builds"`
-	Host     Host              `json:"host"`
-	Warnings []string          `json:"warnings"`
+	Version     string            `json:"allocbench_version"`
+	Started     time.Time         `json:"started"`
+	Finished    *time.Time        `json:"finished,omitempty"`
+	Interrupted bool              `json:"interrupted,omitempty"`
+	Plan        Plan              `json:"plan"`
+	RunEnv      Env               `json:"run_env"`
+	Builds      map[string]string `json:"builds"`
+	Host        Host              `json:"host"`
+	Warnings    []string          `json:"warnings"`
 }
 
 type Plan struct {

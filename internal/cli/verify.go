@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -60,7 +61,7 @@ func newVerifyCommand(opts *options) *cobra.Command {
 			out := cmd.OutOrStdout()
 			failed := 0
 			for _, ref := range refs {
-				v, err := verify(b, ref, jobs, keep)
+				v, err := verify(cmd.Context(), b, ref, jobs, keep)
 				if err != nil {
 					return err
 				}
@@ -104,7 +105,7 @@ func otherJobs(jobs int) int {
 	return 2
 }
 
-func verify(b *build.Builder, ref string, jobs int, keep bool) (verdict, error) {
+func verify(ctx context.Context, b *build.Builder, ref string, jobs int, keep bool) (verdict, error) {
 	tmp, err := os.MkdirTemp("", "allocbench-verify-")
 	if err != nil {
 		return verdict{}, err
@@ -123,7 +124,7 @@ func verify(b *build.Builder, ref string, jobs int, keep bool) (verdict, error) 
 		if err := os.Mkdir(dirs[i], 0o755); err != nil {
 			return verdict{}, err
 		}
-		results[i], err = b.BuildTo(ref, dirs[i], filepath.Join(tmp, fmt.Sprintf("build-%d.log", i+1)), j)
+		results[i], err = b.BuildTo(ctx, ref, dirs[i], filepath.Join(tmp, fmt.Sprintf("build-%d.log", i+1)), j)
 		if err != nil {
 			return verdict{}, err
 		}

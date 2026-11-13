@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -59,7 +60,7 @@ func newShellCommand(opts *options) *cobra.Command {
 			}
 			b.Jobs = jobs
 
-			spec, cleanup, err := shellSpec(b, ref, out, cmd.ErrOrStderr())
+			spec, cleanup, err := shellSpec(cmd.Context(), b, ref, out, cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -72,7 +73,7 @@ func newShellCommand(opts *options) *cobra.Command {
 				spec.Env["TERM"] = term
 			}
 
-			c, err := b.Command(spec)
+			c, err := b.Command(cmd.Context(), spec)
 			if err != nil {
 				return err
 			}
@@ -93,16 +94,16 @@ func newShellCommand(opts *options) *cobra.Command {
 	return cmd
 }
 
-func shellSpec(b *build.Builder, ref, out string, progress io.Writer) (sandbox.Spec, func(), error) {
+func shellSpec(ctx context.Context, b *build.Builder, ref, out string, progress io.Writer) (sandbox.Spec, func(), error) {
 	if kind, name, _ := strings.Cut(ref, "/"); kind == "envs" {
-		spec, err := b.EnvShell(name)
+		spec, err := b.EnvShell(ctx, name)
 		return spec, func() {}, err
 	}
 	dir, cleanup, err := outDir(out)
 	if err != nil {
 		return sandbox.Spec{}, nil, err
 	}
-	spec, err := b.Shell(ref, dir)
+	spec, err := b.Shell(ctx, ref, dir)
 	if err != nil {
 		cleanup()
 		return sandbox.Spec{}, nil, err

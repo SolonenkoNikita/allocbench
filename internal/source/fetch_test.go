@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -51,7 +52,7 @@ func TestFetchPath(t *testing.T) {
 	writeFile(t, filepath.Join(f.Root, "bench-src", "cfrac", "run.sh"), "#!/bin/sh\n", 0o755)
 	src := recipe.Source{Path: "bench-src/cfrac"}
 
-	r, err := f.Fetch(src)
+	r, err := f.Fetch(context.Background(), src)
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -65,13 +66,13 @@ func TestFetchPath(t *testing.T) {
 		t.Errorf("tree: got %s, want %s", r.Tree, want)
 	}
 
-	again, err := f.Fetch(src)
+	again, err := f.Fetch(context.Background(), src)
 	if err != nil || again != r {
 		t.Errorf("second Fetch: %+v, %v", again, err)
 	}
 
 	writeFile(t, filepath.Join(f.Root, "bench-src", "cfrac", "cfrac.c"), "int main() { return 1; }\n", 0o644)
-	changed, err := f.Fetch(src)
+	changed, err := f.Fetch(context.Background(), src)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +113,7 @@ func TestFetchGit(t *testing.T) {
 	url, revs := gitRepo(t)
 	f := newFetcher(t)
 
-	r, err := f.Fetch(recipe.Source{Git: url, Rev: revs[0]})
+	r, err := f.Fetch(context.Background(), recipe.Source{Git: url, Rev: revs[0]})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -123,7 +124,7 @@ func TestFetchGit(t *testing.T) {
 		t.Error(".git was not removed")
 	}
 
-	r2, err := f.Fetch(recipe.Source{Git: url, Rev: revs[1]})
+	r2, err := f.Fetch(context.Background(), recipe.Source{Git: url, Rev: revs[1]})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,18 +136,18 @@ func TestFetchGit(t *testing.T) {
 func TestFetchGitSHA256(t *testing.T) {
 	url, revs := gitRepo(t)
 	f := newFetcher(t)
-	r, err := f.Fetch(recipe.Source{Git: url, Rev: revs[0]})
+	r, err := f.Fetch(context.Background(), recipe.Source{Git: url, Rev: revs[0]})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	f2 := newFetcher(t)
-	if _, err := f2.Fetch(recipe.Source{Git: url, Rev: revs[0], SHA256: r.Tree}); err != nil {
+	if _, err := f2.Fetch(context.Background(), recipe.Source{Git: url, Rev: revs[0], SHA256: r.Tree}); err != nil {
 		t.Errorf("matching sha256: %v", err)
 	}
 
 	f3 := newFetcher(t)
-	_, err = f3.Fetch(recipe.Source{Git: url, Rev: revs[0], SHA256: strings.Repeat("0", 64)})
+	_, err = f3.Fetch(context.Background(), recipe.Source{Git: url, Rev: revs[0], SHA256: strings.Repeat("0", 64)})
 	if err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Errorf("wrong sha256: got %v", err)
 	}
@@ -159,13 +160,13 @@ func TestFetchGitUsesStore(t *testing.T) {
 	url, revs := gitRepo(t)
 	f := newFetcher(t)
 	src := recipe.Source{Git: url, Rev: revs[0]}
-	r, err := f.Fetch(src)
+	r, err := f.Fetch(context.Background(), src)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	os.RemoveAll(strings.TrimPrefix(url, "file://"))
-	again, err := f.Fetch(src)
+	again, err := f.Fetch(context.Background(), src)
 	if err != nil {
 		t.Fatalf("Fetch from store without the repository: %v", err)
 	}
@@ -177,7 +178,7 @@ func TestFetchGitUsesStore(t *testing.T) {
 func TestFetchGitUnknownRev(t *testing.T) {
 	url, _ := gitRepo(t)
 	f := newFetcher(t)
-	_, err := f.Fetch(recipe.Source{Git: url, Rev: strings.Repeat("d", 40)})
+	_, err := f.Fetch(context.Background(), recipe.Source{Git: url, Rev: strings.Repeat("d", 40)})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -259,7 +260,7 @@ func TestFetchURLArchive(t *testing.T) {
 	base := serve(t, map[string][]byte{"/cmake.tar.gz": archive})
 	f := newFetcher(t)
 
-	r, err := f.Fetch(recipe.Source{URL: base + "/cmake.tar.gz", SHA256: sum(archive)})
+	r, err := f.Fetch(context.Background(), recipe.Source{URL: base + "/cmake.tar.gz", SHA256: sum(archive)})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -279,7 +280,7 @@ func TestFetchURLPlainTarAndFile(t *testing.T) {
 	base := serve(t, map[string][]byte{"/src.tar": plain, "/tool.sh": []byte("#!/bin/sh\n")})
 	f := newFetcher(t)
 
-	r, err := f.Fetch(recipe.Source{URL: base + "/src.tar"})
+	r, err := f.Fetch(context.Background(), recipe.Source{URL: base + "/src.tar"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +288,7 @@ func TestFetchURLPlainTarAndFile(t *testing.T) {
 		t.Error("plain tar was not extracted")
 	}
 
-	r, err = f.Fetch(recipe.Source{URL: base + "/tool.sh"})
+	r, err = f.Fetch(context.Background(), recipe.Source{URL: base + "/tool.sh"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +323,7 @@ func TestFetchURLErrors(t *testing.T) {
 			}
 			base := serve(t, files)
 			f := newFetcher(t)
-			_, err := f.Fetch(recipe.Source{URL: base + tt.path, SHA256: tt.sha})
+			_, err := f.Fetch(context.Background(), recipe.Source{URL: base + tt.path, SHA256: tt.sha})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("got %v, want an error containing %q", err, tt.want)
 			}
@@ -348,11 +349,11 @@ func TestFetchPatches(t *testing.T) {
 	writeFile(t, filepath.Join(f.Root, "src", "main.c"), "int x = 1;\n", 0o644)
 	writeFile(t, filepath.Join(f.Root, "patches", "x2.patch"), patchV2, 0o644)
 
-	plain, err := f.Fetch(recipe.Source{Path: "src"})
+	plain, err := f.Fetch(context.Background(), recipe.Source{Path: "src"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	patched, err := f.Fetch(recipe.Source{Path: "src", Patches: []string{"patches/x2.patch"}})
+	patched, err := f.Fetch(context.Background(), recipe.Source{Path: "src", Patches: []string{"patches/x2.patch"}})
 	if err != nil {
 		t.Fatalf("Fetch with patch: %v", err)
 	}
@@ -368,7 +369,7 @@ func TestFetchPatches(t *testing.T) {
 
 	writeFile(t, filepath.Join(f.Root, "patches", "bad.patch"), strings.ReplaceAll(patchV2, "int x = 1;", "int y = 7;"), 0o644)
 	before := srcEntries(t, f)
-	if _, err := f.Fetch(recipe.Source{Path: "src", Patches: []string{"patches/bad.patch"}}); err == nil || !strings.Contains(err.Error(), "patch patches/bad.patch") {
+	if _, err := f.Fetch(context.Background(), recipe.Source{Path: "src", Patches: []string{"patches/bad.patch"}}); err == nil || !strings.Contains(err.Error(), "patch patches/bad.patch") {
 		t.Errorf("bad patch: got %v", err)
 	}
 	if srcEntries(t, f) != before {
@@ -378,13 +379,13 @@ func TestFetchPatches(t *testing.T) {
 
 func TestFetchMissingSources(t *testing.T) {
 	f := newFetcher(t)
-	if _, err := f.Fetch(recipe.Source{Path: "nope"}); err == nil {
+	if _, err := f.Fetch(context.Background(), recipe.Source{Path: "nope"}); err == nil {
 		t.Error("missing path: expected an error")
 	}
-	if _, err := f.Fetch(recipe.Source{Path: ".", Patches: []string{"nope.patch"}}); err == nil {
+	if _, err := f.Fetch(context.Background(), recipe.Source{Path: ".", Patches: []string{"nope.patch"}}); err == nil {
 		t.Error("missing patch: expected an error")
 	}
-	if _, err := f.Fetch(recipe.Source{}); err == nil {
+	if _, err := f.Fetch(context.Background(), recipe.Source{}); err == nil {
 		t.Error("empty source: expected an error")
 	}
 }
@@ -399,7 +400,7 @@ func TestKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := f.Fetch(src)
+	r, err := f.Fetch(context.Background(), src)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -145,6 +145,7 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 		return err
 	}
 	b.Jobs = ro.jobs
+	ctx := cmd.Context()
 
 	dirs := map[string]string{}
 	hashes := map[string]string{}
@@ -156,14 +157,14 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 		refs = append(refs, "benches/"+bn)
 	}
 	for _, ref := range refs {
-		r, err := b.Build(ref)
+		r, err := b.Build(ctx, ref)
 		if err != nil {
 			return err
 		}
 		dirs[ref] = r.Dir
 		hashes[ref] = r.Hash
 	}
-	runEnv, err := b.Env(p.RunEnv)
+	runEnv, err := b.Env(ctx, p.RunEnv)
 	if err != nil {
 		return err
 	}
@@ -224,14 +225,22 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 	var done []cell.Result
 	width := len(fmt.Sprint(len(resolved.Cells)))
 	for i, c := range resolved.Cells {
-		r, err := ex.Run(cell.Input{
+		if ctx.Err() != nil {
+			break
+		}
+		cellDir := filepath.Join(dir, cellsDir, c.ID())
+		r, err := ex.Run(ctx, cell.Input{
 			Cell:     c,
 			Alloc:    s.Allocators[c.Alloc],
 			AllocDir: dirs["allocators/"+c.Alloc],
 			Bench:    s.Benches[c.Bench],
 			BenchDir: dirs["benches/"+c.Bench],
-			Out:      filepath.Join(dir, cellsDir, c.ID()),
+			Out:      cellDir,
 		})
+		if ctx.Err() != nil {
+			os.RemoveAll(cellDir)
+			break
+		}
 		if err != nil {
 			return err
 		}
@@ -245,6 +254,7 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 
 	finished := time.Now().UTC()
 	manifest.Finished = &finished
+	manifest.Interrupted = ctx.Err() != nil
 	if err := results.WriteManifest(dir, manifest); err != nil {
 		return err
 	}
@@ -252,6 +262,9 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 		return err
 	}
 
+	if manifest.Interrupted && len(done) == 0 {
+		return fmt.Errorf("interrupted before the first cell finished, results in %s", dir)
+	}
 	fmt.Fprintln(out)
 	summary, err := os.Create(filepath.Join(dir, results.SummaryFile))
 	if err != nil {
@@ -263,6 +276,9 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 	}
 	if err := summary.Close(); err != nil {
 		return err
+	}
+	if manifest.Interrupted {
+		return fmt.Errorf("interrupted after %d of %d cells, results in %s", len(done), len(resolved.Cells), dir)
 	}
 	failed := 0
 	for _, r := range done {

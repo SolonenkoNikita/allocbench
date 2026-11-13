@@ -2,12 +2,12 @@ package cell
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/SolonenkoNikita/allocbench/internal/elfcheck"
 	"github.com/SolonenkoNikita/allocbench/internal/plan"
+	"github.com/SolonenkoNikita/allocbench/internal/proc"
 	"github.com/SolonenkoNikita/allocbench/internal/recipe"
 	"github.com/SolonenkoNikita/allocbench/internal/runner"
 	"github.com/SolonenkoNikita/allocbench/internal/sandbox"
@@ -76,7 +77,7 @@ func (r Result) OK() bool {
 	return r.Status == StatusOK
 }
 
-func (e *Executor) Run(in Input) (Result, error) {
+func (e *Executor) Run(ctx context.Context, in Input) (Result, error) {
 	if err := os.MkdirAll(in.Out, 0o755); err != nil {
 		return Result{}, err
 	}
@@ -110,11 +111,14 @@ func (e *Executor) Run(in Input) (Result, error) {
 	}
 	defer log.Close()
 
-	cmd := exec.Command(e.bwrap(), args...)
+	cmd := proc.Command(ctx, e.bwrap(), args...)
 	var stderr bytes.Buffer
 	cmd.Stdout = log
 	cmd.Stderr = io.MultiWriter(log, &stderr)
 	if err := cmd.Run(); err != nil {
+		if stopped := proc.Stopped(ctx); stopped != nil {
+			return Result{}, fmt.Errorf("%s: %w", in.Cell.ID(), stopped)
+		}
 		return Result{}, fmt.Errorf("%s: sandbox: %w: %s", in.Cell.ID(), err, strings.TrimSpace(stderr.String()))
 	}
 

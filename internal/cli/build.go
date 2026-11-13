@@ -46,7 +46,7 @@ func newBuildCommand(opts *options) *cobra.Command {
 
 			var results []build.Result
 			for _, ref := range refs {
-				r, err := b.Build(ref)
+				r, err := b.Build(cmd.Context(), ref)
 				if err != nil {
 					return err
 				}

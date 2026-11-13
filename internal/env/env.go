@@ -1,12 +1,12 @@
 package env
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/SolonenkoNikita/allocbench/internal/logs"
+	"github.com/SolonenkoNikita/allocbench/internal/proc"
 	"github.com/SolonenkoNikita/allocbench/internal/recipe"
 	"github.com/SolonenkoNikita/allocbench/internal/source"
 	"github.com/SolonenkoNikita/allocbench/internal/store"
@@ -41,7 +42,7 @@ type Env struct {
 	Mirror string `json:"mirror"`
 }
 
-func (b *Builder) Ensure(e recipe.Env, hash string) (Env, error) {
+func (b *Builder) Ensure(ctx context.Context, e recipe.Env, hash string) (Env, error) {
 	entry, err := b.Store.Create(store.Env, hash)
 	if errors.Is(err, store.ErrExists) {
 		return b.load(hash)
@@ -73,11 +74,14 @@ func (b *Builder) Ensure(e recipe.Env, hash string) (Env, error) {
 		w = io.MultiWriter(log, b.Log)
 	}
 
-	cmd := exec.Command(b.mmdebstrap(), args...)
+	cmd := proc.Command(ctx, b.mmdebstrap(), args...)
 	cmd.Env = append(os.Environ(), "SOURCE_DATE_EPOCH="+strconv.FormatInt(epoch, 10))
 	cmd.Stdout = w
 	cmd.Stderr = w
 	if err := cmd.Run(); err != nil {
+		if stopped := proc.Stopped(ctx); stopped != nil {
+			return Env{}, stopped
+		}
 		return Env{}, fmt.Errorf("mmdebstrap: %w\n%s\nfull log: %s", err, logs.Tail(logPath, logTail), logPath)
 	}
 

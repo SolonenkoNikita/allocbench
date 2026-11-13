@@ -1,6 +1,7 @@
 package cell
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -261,7 +262,7 @@ func (w *world) run(t *testing.T, alloc string, b recipe.Bench) Result {
 		in.Alloc = mi()
 		in.AllocDir = w.alloc
 	}
-	r, err := w.exec.Run(in)
+	r, err := w.exec.Run(context.Background(), in)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -385,7 +386,7 @@ tail -n +3 /proc/net/dev | cut -d: -f1 | tr -d ' '
 func TestRunSandboxError(t *testing.T) {
 	w := newWorld(t)
 	w.exec.Bwrap = "/bin/false"
-	_, err := w.exec.Run(Input{Cell: cell("sys"), Bench: bench(), BenchDir: w.bench, Out: t.TempDir()})
+	_, err := w.exec.Run(context.Background(), Input{Cell: cell("sys"), Bench: bench(), BenchDir: w.bench, Out: t.TempDir()})
 	if err == nil || !strings.Contains(err.Error(), "fake/sys/t4/r2: sandbox") {
 		t.Errorf("got %v", err)
 	}
@@ -406,7 +407,7 @@ func TestRunIncompatible(t *testing.T) {
 
 	e := &Executor{Rootfs: t.TempDir(), Runner: "/r", Bwrap: "/nonexistent/bwrap"}
 	in := Input{Cell: cell("sys"), Bench: recipe.Bench{Run: recipe.Run{Cmd: []string{"/bench/bin/prog"}}}, BenchDir: benchDir, Out: filepath.Join(t.TempDir(), "cell")}
-	r, err := e.Run(in)
+	r, err := e.Run(context.Background(), in)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,7 +153,7 @@ func TestBuild(t *testing.T) {
 	b := f.builder()
 	b.Progress = &progress
 
-	r, err := b.Build("allocators/hello")
+	r, err := b.Build(context.Background(), "allocators/hello")
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -179,7 +180,7 @@ func TestBuildUsesStore(t *testing.T) {
 	needBwrap(t)
 	f := newFixture(t)
 	f.hostEnv(t)
-	first, err := f.builder().Build("allocators/hello")
+	first, err := f.builder().Build(context.Background(), "allocators/hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +189,7 @@ func TestBuildUsesStore(t *testing.T) {
 	b := f.builder()
 	b.Progress = &progress
 	b.Bwrap = "/nonexistent/bwrap"
-	second, err := b.Build("allocators/hello")
+	second, err := b.Build(context.Background(), "allocators/hello")
 	if err != nil {
 		t.Fatalf("cached build: %v", err)
 	}
@@ -204,13 +205,13 @@ func TestBuildRebuildsOnSourceChange(t *testing.T) {
 	needBwrap(t)
 	f := newFixture(t)
 	f.hostEnv(t)
-	first, err := f.builder().Build("allocators/hello")
+	first, err := f.builder().Build(context.Background(), "allocators/hello")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	f.write(t, "src/hello/message", "v2\n", 0o644)
-	second, err := f.builder().Build("allocators/hello")
+	second, err := f.builder().Build(context.Background(), "allocators/hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +223,7 @@ func TestBuildRebuildsOnSourceChange(t *testing.T) {
 	}
 
 	f.write(t, "src/greet/greet.sh", "#!/bin/sh\necho new greet\n", 0o755)
-	third, err := f.builder().Build("allocators/hello")
+	third, err := f.builder().Build(context.Background(), "allocators/hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +237,7 @@ func TestBuildFailure(t *testing.T) {
 	f := newFixture(t)
 	f.hostEnv(t)
 
-	_, err := f.builder().Build("allocators/broken")
+	_, err := f.builder().Build(context.Background(), "allocators/broken")
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -257,7 +258,7 @@ func TestBuildEmptyOutput(t *testing.T) {
 	needBwrap(t)
 	f := newFixture(t)
 	f.hostEnv(t)
-	_, err := f.builder().Build("allocators/empty")
+	_, err := f.builder().Build(context.Background(), "allocators/empty")
 	if err == nil || !strings.Contains(err.Error(), "nothing into /out") {
 		t.Errorf("got %v", err)
 	}
@@ -265,7 +266,7 @@ func TestBuildEmptyOutput(t *testing.T) {
 
 func TestBuildNothingToBuild(t *testing.T) {
 	f := newFixture(t)
-	r, err := f.builder().Build("allocators/sys")
+	r, err := f.builder().Build(context.Background(), "allocators/sys")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +277,7 @@ func TestBuildNothingToBuild(t *testing.T) {
 
 func TestBuildEnvFailure(t *testing.T) {
 	f := newFixture(t)
-	_, err := f.builder().Build("allocators/hello")
+	_, err := f.builder().Build(context.Background(), "allocators/hello")
 	if err == nil || !strings.Contains(err.Error(), "tools/greet: environment host") {
 		t.Errorf("got %v", err)
 	}
@@ -295,7 +296,7 @@ func TestBuildUnknownRecipe(t *testing.T) {
 		"hello":           "must be allocators, benches or tools",
 	}
 	for ref, want := range tests {
-		if _, err := f.builder().Build(ref); err == nil || !strings.Contains(err.Error(), want) {
+		if _, err := f.builder().Build(context.Background(), ref); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: got %v, want %q", ref, err, want)
 		}
 	}
@@ -305,7 +306,7 @@ func TestBuildDepsCycle(t *testing.T) {
 	f := newFixture(t)
 	f.set.Tools["a"] = recipe.Tool{BuildEnv: "host", Source: recipe.Source{Path: "src/greet"}, Build: recipe.Build{Script: "true", Deps: []string{"b"}}}
 	f.set.Tools["b"] = recipe.Tool{BuildEnv: "host", Source: recipe.Source{Path: "src/greet"}, Build: recipe.Build{Script: "true", Deps: []string{"a"}}}
-	if _, err := f.builder().Build("tools/a"); err == nil || !strings.Contains(err.Error(), "deps cycle") {
+	if _, err := f.builder().Build(context.Background(), "tools/a"); err == nil || !strings.Contains(err.Error(), "deps cycle") {
 		t.Errorf("got %v", err)
 	}
 }
@@ -336,7 +337,7 @@ func TestShell(t *testing.T) {
 	out := t.TempDir()
 	b := f.builder()
 
-	spec, err := b.Shell("allocators/hello", out)
+	spec, err := b.Shell(context.Background(), "allocators/hello", out)
 	if err != nil {
 		t.Fatalf("Shell: %v", err)
 	}
@@ -361,7 +362,7 @@ func TestShell(t *testing.T) {
 	}
 
 	spec.Cmd = []string{"/bin/sh", "-c", "greet > /out/greet.txt; cat /src/message"}
-	cmd, err := b.Command(spec)
+	cmd, err := b.Command(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,13 +381,13 @@ func TestShell(t *testing.T) {
 func TestShellErrors(t *testing.T) {
 	f := newFixture(t)
 	b := f.builder()
-	if _, err := b.Shell("allocators/sys", t.TempDir()); err == nil || !strings.Contains(err.Error(), "nothing to build") {
+	if _, err := b.Shell(context.Background(), "allocators/sys", t.TempDir()); err == nil || !strings.Contains(err.Error(), "nothing to build") {
 		t.Errorf("sys: %v", err)
 	}
-	if _, err := b.Shell("allocators/nope", t.TempDir()); err == nil || !strings.Contains(err.Error(), "no such recipe") {
+	if _, err := b.Shell(context.Background(), "allocators/nope", t.TempDir()); err == nil || !strings.Contains(err.Error(), "no such recipe") {
 		t.Errorf("unknown: %v", err)
 	}
-	if _, err := b.Shell("allocators/broken", t.TempDir()); err == nil || !strings.Contains(err.Error(), "environment host") {
+	if _, err := b.Shell(context.Background(), "allocators/broken", t.TempDir()); err == nil || !strings.Contains(err.Error(), "environment host") {
 		t.Errorf("missing env: %v", err)
 	}
 }
@@ -394,7 +395,7 @@ func TestShellErrors(t *testing.T) {
 func TestEnvShell(t *testing.T) {
 	f := newFixture(t)
 	f.hostEnv(t)
-	spec, err := f.builder().EnvShell("host")
+	spec, err := f.builder().EnvShell(context.Background(), "host")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +403,7 @@ func TestEnvShell(t *testing.T) {
 	if spec.Rootfs != filepath.Join(f.store.Path(store.Env, h), "rootfs") || len(spec.Mounts) != 0 || spec.Dir != "/build" || spec.Env["HOME"] != "/build" {
 		t.Errorf("spec: %+v", spec)
 	}
-	if _, err := f.builder().EnvShell("nope"); err == nil || !strings.Contains(err.Error(), "envs/nope: no such recipe") {
+	if _, err := f.builder().EnvShell(context.Background(), "nope"); err == nil || !strings.Contains(err.Error(), "envs/nope: no such recipe") {
 		t.Errorf("unknown env: %v", err)
 	}
 }
@@ -411,14 +412,14 @@ func TestCommand(t *testing.T) {
 	f := newFixture(t)
 	b := f.builder()
 	b.Bwrap = "/opt/bwrap"
-	cmd, err := b.Command(sandbox.Spec{Rootfs: "/", Cmd: []string{"/bin/true"}})
+	cmd, err := b.Command(context.Background(), sandbox.Spec{Rootfs: "/", Cmd: []string{"/bin/true"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cmd.Path != "/opt/bwrap" || cmd.Args[len(cmd.Args)-1] != "/bin/true" {
 		t.Errorf("command: %v", cmd.Args)
 	}
-	if _, err := b.Command(sandbox.Spec{Rootfs: "/", Cmd: []string{"true"}}); err == nil {
+	if _, err := b.Command(context.Background(), sandbox.Spec{Rootfs: "/", Cmd: []string{"true"}}); err == nil {
 		t.Error("expected an error for a relative command")
 	}
 }
@@ -426,7 +427,7 @@ func TestCommand(t *testing.T) {
 func TestEnv(t *testing.T) {
 	f := newFixture(t)
 	f.hostEnv(t)
-	e, err := f.builder().Env("host")
+	e, err := f.builder().Env(context.Background(), "host")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +435,7 @@ func TestEnv(t *testing.T) {
 	if e.Hash != h || e.Rootfs != filepath.Join(f.store.Path(store.Env, h), "rootfs") {
 		t.Errorf("env: %+v", e)
 	}
-	if _, err := f.builder().Env("nope"); err == nil || !strings.Contains(err.Error(), "envs/nope: no such recipe") {
+	if _, err := f.builder().Env(context.Background(), "nope"); err == nil || !strings.Contains(err.Error(), "envs/nope: no such recipe") {
 		t.Errorf("unknown env: %v", err)
 	}
 }
@@ -449,7 +450,7 @@ func TestBuildTo(t *testing.T) {
 	out := t.TempDir()
 	logPath := filepath.Join(t.TempDir(), "build.log")
 
-	r, err := b.BuildTo("allocators/hello", out, logPath, 7)
+	r, err := b.BuildTo(context.Background(), "allocators/hello", out, logPath, 7)
 	if err != nil {
 		t.Fatalf("BuildTo: %v", err)
 	}
@@ -469,7 +470,7 @@ func TestBuildTo(t *testing.T) {
 		t.Errorf("progress:\n%s", progress.String())
 	}
 
-	built, err := f.builder().Build("allocators/hello")
+	built, err := f.builder().Build(context.Background(), "allocators/hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,11 +481,11 @@ func TestBuildTo(t *testing.T) {
 
 func TestBuildToNothingAndErrors(t *testing.T) {
 	f := newFixture(t)
-	r, err := f.builder().BuildTo("allocators/sys", t.TempDir(), filepath.Join(t.TempDir(), "log"), 1)
+	r, err := f.builder().BuildTo(context.Background(), "allocators/sys", t.TempDir(), filepath.Join(t.TempDir(), "log"), 1)
 	if err != nil || r.Hash != "" {
 		t.Errorf("sys: %+v, %v", r, err)
 	}
-	if _, err := f.builder().BuildTo("allocators/nope", t.TempDir(), filepath.Join(t.TempDir(), "log"), 1); err == nil {
+	if _, err := f.builder().BuildTo(context.Background(), "allocators/nope", t.TempDir(), filepath.Join(t.TempDir(), "log"), 1); err == nil {
 		t.Error("expected an error for an unknown recipe")
 	}
 }

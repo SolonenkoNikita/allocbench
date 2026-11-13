@@ -2,6 +2,7 @@ package source
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -9,10 +10,10 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/SolonenkoNikita/allocbench/internal/proc"
 	"github.com/SolonenkoNikita/allocbench/internal/recipe"
 	"github.com/SolonenkoNikita/allocbench/internal/store"
 )
@@ -30,7 +31,7 @@ type Result struct {
 	Dir  string
 }
 
-func (f *Fetcher) Fetch(src recipe.Source) (Result, error) {
+func (f *Fetcher) Fetch(ctx context.Context, src recipe.Source) (Result, error) {
 	key, err := f.Key(src)
 	if err != nil {
 		return Result{}, err
@@ -47,9 +48,9 @@ func (f *Fetcher) Fetch(src recipe.Source) (Result, error) {
 
 	switch {
 	case src.Git != "":
-		err = f.fetchGit(src, e.Dir)
+		err = f.fetchGit(ctx, src, e.Dir)
 	case src.URL != "":
-		err = f.fetchURL(src, e.Dir)
+		err = f.fetchURL(ctx, src, e.Dir)
 	case src.Path != "":
 		err = copyTree(filepath.Join(f.Root, src.Path), e.Dir)
 	default:
@@ -70,7 +71,7 @@ func (f *Fetcher) Fetch(src recipe.Source) (Result, error) {
 	}
 
 	for _, p := range src.Patches {
-		if err := f.run(e.Dir, f.git(), "apply", "--whitespace=nowarn", filepath.Join(f.Root, p)); err != nil {
+		if err := f.run(ctx, e.Dir, f.git(), "apply", "--whitespace=nowarn", filepath.Join(f.Root, p)); err != nil {
 			return Result{}, fmt.Errorf("patch %s: %w", p, err)
 		}
 	}
@@ -117,28 +118,38 @@ func (f *Fetcher) Key(src recipe.Source) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func (f *Fetcher) fetchGit(src recipe.Source, dir string) error {
+func (f *Fetcher) fetchGit(ctx context.Context, src recipe.Source, dir string) error {
 	git := f.git()
-	if err := f.run(dir, git, "init", "-q"); err != nil {
+	if err := f.run(ctx, dir, git, "init", "-q"); err != nil {
 		return err
 	}
-	if err := f.run(dir, git, "fetch", "-q", "--depth", "1", src.Git, src.Rev); err != nil {
-		if err := f.run(dir, git, "fetch", "-q", src.Git, "+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*"); err != nil {
+	if err := f.run(ctx, dir, git, "fetch", "-q", "--depth", "1", src.Git, src.Rev); err != nil {
+		if err := f.run(ctx, dir, git, "fetch", "-q", src.Git, "+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*"); err != nil {
 			return fmt.Errorf("git fetch %s: %w", src.Git, err)
 		}
 	}
-	if err := f.run(dir, git, "-c", "advice.detachedHead=false", "checkout", "-q", src.Rev); err != nil {
+	if err := f.run(ctx, dir, git, "-c", "advice.detachedHead=false", "checkout", "-q", src.Rev); err != nil {
 		return fmt.Errorf("git checkout %s: %w", src.Rev, err)
 	}
 	return os.RemoveAll(filepath.Join(dir, ".git"))
 }
 
-func (f *Fetcher) fetchURL(src recipe.Source, dir string) error {
+func (f *Fetcher) fetchURL(ctx context.Context, src recipe.Source, dir string) error {
 	client := f.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Get(src.URL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src.URL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if stopped := proc.Stopped(ctx); stopped != nil {
+		if err == nil {
+			resp.Body.Close()
+		}
+		return stopped
+	}
 	if err != nil {
 		return err
 	}
@@ -156,6 +167,9 @@ func (f *Fetcher) fetchURL(src recipe.Source, dir string) error {
 
 	h := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(tmp, h), resp.Body); err != nil {
+		if stopped := proc.Stopped(ctx); stopped != nil {
+			return stopped
+		}
 		return fmt.Errorf("%s: %w", src.URL, err)
 	}
 	if sum := hex.EncodeToString(h.Sum(nil)); src.SHA256 != "" && sum != src.SHA256 {
@@ -188,13 +202,16 @@ func (f *Fetcher) git() string {
 	return "git"
 }
 
-func (f *Fetcher) run(dir, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
+func (f *Fetcher) run(ctx context.Context, dir, name string, args ...string) error {
+	cmd := proc.Command(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if stopped := proc.Stopped(ctx); stopped != nil {
+			return stopped
+		}
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return fmt.Errorf("%w: %s", err, msg)
 		}

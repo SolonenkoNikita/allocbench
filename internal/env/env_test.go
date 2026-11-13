@@ -1,6 +1,7 @@
 package env
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -142,7 +143,7 @@ func (f *fake) calls(t *testing.T) int {
 func TestEnsure(t *testing.T) {
 	f := newFake(t)
 
-	e, err := f.b.Ensure(testEnv, testHash)
+	e, err := f.b.Ensure(context.Background(), testEnv, testHash)
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -182,11 +183,11 @@ func TestEnsure(t *testing.T) {
 
 func TestEnsureUsesStore(t *testing.T) {
 	f := newFake(t)
-	first, err := f.b.Ensure(testEnv, testHash)
+	first, err := f.b.Ensure(context.Background(), testEnv, testHash)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := f.b.Ensure(testEnv, testHash)
+	second, err := f.b.Ensure(context.Background(), testEnv, testHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +203,7 @@ func TestEnsureFailure(t *testing.T) {
 	f := newFake(t)
 	os.WriteFile(filepath.Join(f.dir, "fail"), nil, 0o644)
 
-	_, err := f.b.Ensure(testEnv, testHash)
+	_, err := f.b.Ensure(context.Background(), testEnv, testHash)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -220,7 +221,7 @@ func TestEnsureFailure(t *testing.T) {
 	}
 
 	os.Remove(filepath.Join(f.dir, "fail"))
-	if _, err := f.b.Ensure(testEnv, testHash); err != nil {
+	if _, err := f.b.Ensure(context.Background(), testEnv, testHash); err != nil {
 		t.Errorf("Ensure after a failure: %v", err)
 	}
 }
@@ -228,7 +229,7 @@ func TestEnsureFailure(t *testing.T) {
 func TestEnsureDefaultMirror(t *testing.T) {
 	f := newFake(t)
 	f.b.Mirror = ""
-	e, err := f.b.Ensure(testEnv, testHash)
+	e, err := f.b.Ensure(context.Background(), testEnv, testHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +242,7 @@ func TestEnsureBadRecipe(t *testing.T) {
 	f := newFake(t)
 	e := testEnv
 	e.Distro = "fedora"
-	if _, err := f.b.Ensure(e, testHash); err == nil {
+	if _, err := f.b.Ensure(context.Background(), e, testHash); err == nil {
 		t.Error("expected an error")
 	}
 	if n := f.calls(t); n != 0 {
@@ -254,7 +255,7 @@ func TestEnsureLogCopy(t *testing.T) {
 	var out strings.Builder
 	f.b.Log = &out
 	os.WriteFile(filepath.Join(f.dir, "fail"), nil, 0o644)
-	f.b.Ensure(testEnv, testHash)
+	f.b.Ensure(context.Background(), testEnv, testHash)
 	if out.String() != "E: download failed\n" {
 		t.Errorf("Log writer got %q", out.String())
 	}
