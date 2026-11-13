@@ -415,6 +415,28 @@ results/20261112T200539Z/
 В `manifest.json` записываются ядро, модель CPU, число ядер, доступные процессу ядра (`allowed_cpus`), объём памяти, режим transparent huge pages, `cpu governor` и `overcommit_memory`: rootfs их не фиксирует, а на результат они влияют.
 Там же лежат закреплённые ядра (`plan.cpus`) и предупреждения прогона (`warnings`).
 
+Два прогона сравнивает `allocbench diff`.
+Сначала выводится, чем различались условия: параметры машины, окружение запуска, хеши сборок, план и предупреждения. Время начала и конца не сравнивается. Затем — как изменились медианы:
+
+```bash
+$ ./allocbench diff results/20261113T194850Z results/20261113T195132Z
+A: results/20261113T194850Z
+B: results/20261113T195132Z
+
+conditions differ in 4 places:
+  plan.cpus  - -> 3
+  warnings   - load: 3.58 over the last minute, other processes compete for CPUs
+             - cpus: not pinned, the scheduler moves benches between CPUs
+             + load: 4.49 over the last minute, other processes compete for CPUs
+
+BENCH  THREADS  ALLOC  A       B       CHANGE
+cfrac  1        sys    8.280s  8.298s  +0.2%
+cfrac  1        mi     7.534s  7.253s  -3.7%
+```
+
+`-` означает, что значения нет: поле отсутствует, сборки нет или у группы нет успешных ячеек.
+Если результаты двух прогонов расходятся, по первой части видно, можно ли их вообще сравнивать.
+
 ---
 
 ## Проверка воспроизводимости
@@ -472,6 +494,7 @@ benches/cfrac: reproducible, out e362c4a97aa8, same as the store
 | `allocbench lock [рецепт]...` | записать хеши окружений и сборок в `allocbench.lock`; с `--check` — сверить с ним |
 | `allocbench verify [рецепт]...` | собрать дважды и сравнить результаты по файлам |
 | `allocbench doctor` | проверить, подходит ли машина для сборок и замеров |
+| `allocbench diff <прогон> <прогон>` | сравнить условия и медианы двух прогонов |
 
 Общие флаги:
 
