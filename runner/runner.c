@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -38,6 +39,8 @@ typedef struct
 	char *env[MAX_ENV];
 	int env_count;
 	double timeout_sec;
+	bool pin_cpus;
+	cpu_set_t cpus;
 	const char *stdout_path;
 	const char *stderr_path;
 	const char *result_path;
@@ -70,7 +73,7 @@ static void usage(const char *message)
 {
 	fprintf(stderr, "runner: %s\n", message);
 	fprintf(stderr,
-		"usage: runner [--env K=V]... [--timeout SEC] [--stdout FILE] [--stderr FILE] [--result FILE] -- CMD [ARG]...\n");
+		"usage: runner [--env K=V]... [--timeout SEC] [--cpus LIST] [--stdout FILE] [--stderr FILE] [--result FILE] -- CMD [ARG]...\n");
 	exit(EXIT_USAGE);
 }
 
@@ -108,6 +111,46 @@ static double parse_seconds(const char *text)
 	return seconds;
 }
 
+static size_t parse_cpu(const char *text, char **end)
+{
+	long cpu;
+
+	if (*text < '0' || *text > '9')
+		usage("--cpus needs a list like 0-3,6");
+	errno = 0;
+	cpu = strtol(text, end, 10);
+	if (errno || cpu >= CPU_SETSIZE)
+		usage("--cpus has a CPU number above the limit");
+	return (size_t)cpu;
+}
+
+static void parse_cpus(const char *text, Options *options)
+{
+	const char *cursor = text;
+
+	CPU_ZERO(&options->cpus);
+	options->pin_cpus = true;
+	for (;;) {
+		char *end;
+		size_t first = parse_cpu(cursor, &end);
+		size_t last = first;
+		size_t cpu;
+
+		if (*end == '-') {
+			last = parse_cpu(end + 1, &end);
+			if (last < first)
+				usage("--cpus has a range that goes down");
+		}
+		for (cpu = first; cpu <= last; cpu++)
+			CPU_SET(cpu, &options->cpus);
+		if (!*end)
+			return;
+		if (*end != ',')
+			usage("--cpus needs a list like 0-3,6");
+		cursor = end + 1;
+	}
+}
+
 static void parse_options(int argc, char **argv, Options *options)
 {
 	int arg_index;
@@ -124,6 +167,8 @@ static void parse_options(int argc, char **argv, Options *options)
 			add_env(options, option_value(argc, argv, &arg_index));
 		else if (!strcmp(arg, "--timeout"))
 			options->timeout_sec = parse_seconds(option_value(argc, argv, &arg_index));
+		else if (!strcmp(arg, "--cpus"))
+			parse_cpus(option_value(argc, argv, &arg_index), options);
 		else if (!strcmp(arg, "--stdout"))
 			options->stdout_path = option_value(argc, argv, &arg_index);
 		else if (!strcmp(arg, "--stderr"))
@@ -251,6 +296,8 @@ static void run(const Options *options, Result *result)
 	pid_t pid;
 
 	memset(result, 0, sizeof(*result));
+	if (options->pin_cpus && sched_setaffinity(0, sizeof(options->cpus), &options->cpus))
+		fail("sched_setaffinity");
 	if (pipe2(error_pipe, O_CLOEXEC))
 		fail("pipe2");
 

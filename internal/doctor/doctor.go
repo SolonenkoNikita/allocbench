@@ -83,11 +83,20 @@ func New() *Checker {
 }
 
 func (c *Checker) Check() []Finding {
+	return append(c.Requirements(), c.Conditions()...)
+}
+
+func (c *Checker) Requirements() []Finding {
+	return collect(c.kernel, c.tools, c.userns, c.subIDs)
+}
+
+func (c *Checker) Conditions() []Finding {
+	return collect(c.governor, c.turbo, c.corePattern, c.hugePages, c.memory, c.load, c.power)
+}
+
+func collect(checks ...func() []Finding) []Finding {
 	var findings []Finding
-	for _, check := range []func() []Finding{
-		c.kernel, c.tools, c.userns, c.subIDs,
-		c.governor, c.turbo, c.corePattern, c.hugePages, c.memory, c.load, c.power,
-	} {
+	for _, check := range checks {
 		findings = append(findings, check()...)
 	}
 	return findings

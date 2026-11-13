@@ -81,6 +81,9 @@ func check(p *Plan, s *recipe.Set) error {
 	default:
 		fail("order %q must be %s or %s", p.Order, OrderInterleaved, OrderSequential)
 	}
+	if _, err := ParseCPUs(p.CPUs); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 

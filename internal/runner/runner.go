@@ -14,6 +14,7 @@ const Protocol = 1
 type Options struct {
 	Env     map[string]string
 	Timeout time.Duration
+	CPUs    string
 	Stdout  string
 	Stderr  string
 	Result  string
@@ -47,6 +48,9 @@ func Args(runner string, o Options, cmd []string) []string {
 	}
 	if o.Timeout > 0 {
 		args = append(args, "--timeout", strconv.FormatFloat(o.Timeout.Seconds(), 'f', -1, 64))
+	}
+	if o.CPUs != "" {
+		args = append(args, "--cpus", o.CPUs)
 	}
 	for _, f := range []struct{ flag, path string }{
 		{"--stdout", o.Stdout},

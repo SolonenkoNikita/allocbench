@@ -30,6 +30,7 @@ type Manifest struct {
 	RunEnv   Env               `json:"run_env"`
 	Builds   map[string]string `json:"builds"`
 	Host     Host              `json:"host"`
+	Warnings []string          `json:"warnings"`
 }
 
 type Plan struct {
@@ -37,6 +38,7 @@ type Plan struct {
 	Benches    []string `json:"benches"`
 	Repeat     int      `json:"repeat"`
 	Order      string   `json:"order"`
+	CPUs       string   `json:"cpus"`
 	Cells      int      `json:"cells"`
 }
 
@@ -52,14 +54,15 @@ type Env struct {
 }
 
 type Host struct {
-	Kernel     string `json:"kernel"`
-	Arch       string `json:"arch"`
-	CPUModel   string `json:"cpu_model"`
-	CPUs       int    `json:"cpus"`
-	MemoryKB   int64  `json:"memory_kb"`
-	THP        string `json:"transparent_hugepages"`
-	Governor   string `json:"cpu_governor"`
-	Overcommit string `json:"overcommit_memory"`
+	Kernel      string `json:"kernel"`
+	Arch        string `json:"arch"`
+	CPUModel    string `json:"cpu_model"`
+	CPUs        int    `json:"cpus"`
+	AllowedCPUs string `json:"allowed_cpus"`
+	MemoryKB    int64  `json:"memory_kb"`
+	THP         string `json:"transparent_hugepages"`
+	Governor    string `json:"cpu_governor"`
+	Overcommit  string `json:"overcommit_memory"`
 }
 
 type Record struct {
@@ -191,14 +194,15 @@ func ReadHost(root string) Host {
 		return strings.TrimSpace(string(data))
 	}
 	return Host{
-		Kernel:     read("proc/sys/kernel/osrelease"),
-		Arch:       runtime.GOARCH,
-		CPUModel:   field(filepath.Join(root, "proc/cpuinfo"), "model name"),
-		CPUs:       runtime.NumCPU(),
-		MemoryKB:   memTotal(filepath.Join(root, "proc/meminfo")),
-		THP:        selected(read("sys/kernel/mm/transparent_hugepage/enabled")),
-		Governor:   read("sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"),
-		Overcommit: read("proc/sys/vm/overcommit_memory"),
+		Kernel:      read("proc/sys/kernel/osrelease"),
+		Arch:        runtime.GOARCH,
+		CPUModel:    field(filepath.Join(root, "proc/cpuinfo"), "model name"),
+		CPUs:        runtime.NumCPU(),
+		AllowedCPUs: field(filepath.Join(root, "proc/self/status"), "Cpus_allowed_list"),
+		MemoryKB:    memTotal(filepath.Join(root, "proc/meminfo")),
+		THP:         selected(read("sys/kernel/mm/transparent_hugepage/enabled")),
+		Governor:    read("sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"),
+		Overcommit:  read("proc/sys/vm/overcommit_memory"),
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/SolonenkoNikita/allocbench/internal/cell"
+	"github.com/SolonenkoNikita/allocbench/internal/doctor"
 	"github.com/SolonenkoNikita/allocbench/internal/plan"
 	"github.com/SolonenkoNikita/allocbench/internal/recipe"
 	"github.com/SolonenkoNikita/allocbench/internal/results"
@@ -35,6 +37,7 @@ type runOptions struct {
 	runEnv  string
 	repeat  int
 	order   string
+	cpus    string
 	results string
 	jobs    int
 }
@@ -71,6 +74,7 @@ func newRunCommand(opts *options) *cobra.Command {
 	f.StringVar(&ro.runEnv, "run-env", "", "environment to run benches in (default: the only env recipe)")
 	f.IntVar(&ro.repeat, "repeat", 1, "how many times to run every cell")
 	f.StringVar(&ro.order, "order", plan.OrderInterleaved, "interleaved or sequential")
+	f.StringVar(&ro.cpus, "cpus", "", "pin benches to these CPUs, a list like 2-5,7")
 	f.StringVar(&ro.results, "results", "results", "directory for results")
 	f.IntVarP(&ro.jobs, "jobs", "j", ro.jobs, "parallel jobs inside a build ($JOBS)")
 	return cmd
@@ -101,6 +105,9 @@ func runPlan(cmd *cobra.Command, ro *runOptions, s *recipe.Set) (*plan.Plan, err
 	if flags.Changed("order") {
 		p.Order = ro.order
 	}
+	if flags.Changed("cpus") {
+		p.CPUs = ro.cpus
+	}
 
 	if len(p.Allocators) == 0 {
 		return nil, fmt.Errorf("choose allocators with --alloc: %s or all", strings.Join(keys(s.Allocators), ", "))
@@ -127,6 +134,11 @@ func expandAll(names, all []string) []string {
 func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p *plan.Plan, resolved *plan.Resolved) error {
 	if _, ok := s.Tools[runnerRecipe]; !ok {
 		return fmt.Errorf("tools/%s: no such recipe, it builds the runner", runnerRecipe)
+	}
+	host := results.ReadHost(hostRoot)
+	cpus, err := pinnedCPUs(p.CPUs, host.AllowedCPUs)
+	if err != nil {
+		return err
 	}
 	b, err := newBuilder(opts, s, cmd.ErrOrStderr())
 	if err != nil {
@@ -170,6 +182,7 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 			Benches:    p.Benches,
 			Repeat:     p.Repeat,
 			Order:      p.Order,
+			CPUs:       plan.FormatCPUs(cpus),
 			Cells:      len(resolved.Cells),
 		},
 		RunEnv: results.Env{
@@ -182,8 +195,14 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 			Tree:     runEnv.Tree,
 			Mirror:   runEnv.Mirror,
 		},
-		Builds: hashes,
-		Host:   results.ReadHost(hostRoot),
+		Builds:   hashes,
+		Host:     host,
+		Warnings: []string{},
+	}
+	warnings := runWarnings(hostConditions(), resolved.Cells, cpus, host.CPUs)
+	for _, f := range warnings {
+		manifest.Warnings = append(manifest.Warnings, f.Check+": "+f.Detail)
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s: %s\n  fix: %s\n", f.Check, f.Detail, f.Fix)
 	}
 	if err := results.WriteManifest(dir, manifest); err != nil {
 		return err
@@ -194,9 +213,12 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 	}
 	defer w.Close()
 
-	ex := &cell.Executor{Rootfs: runEnv.Rootfs, Runner: dirs["tools/"+runnerRecipe]}
+	ex := &cell.Executor{Rootfs: runEnv.Rootfs, Runner: dirs["tools/"+runnerRecipe], CPUs: manifest.Plan.CPUs}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "host: %s\n", manifest.Host)
+	if len(cpus) > 0 {
+		fmt.Fprintf(out, "pinned to CPUs %s\n", manifest.Plan.CPUs)
+	}
 	fmt.Fprintf(out, "running %d cells, results in %s\n", len(resolved.Cells), dir)
 
 	var done []cell.Result
@@ -252,6 +274,66 @@ func execute(cmd *cobra.Command, opts *options, ro *runOptions, s *recipe.Set, p
 		return fmt.Errorf("%d of %d cells failed, see %s", failed, len(done), filepath.Join(dir, cellsDir))
 	}
 	return nil
+}
+
+var hostConditions = func() []doctor.Finding {
+	return doctor.New().Conditions()
+}
+
+func pinnedCPUs(text, allowed string) ([]int, error) {
+	cpus, err := plan.ParseCPUs(text)
+	if err != nil || len(cpus) == 0 {
+		return nil, err
+	}
+	permitted, err := plan.ParseCPUs(allowed)
+	if err != nil || len(permitted) == 0 {
+		return cpus, nil
+	}
+	var missing []int
+	for _, cpu := range cpus {
+		if !slices.Contains(permitted, cpu) {
+			missing = append(missing, cpu)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("cpus %s are not available, this process may use %s", plan.FormatCPUs(missing), allowed)
+	}
+	return cpus, nil
+}
+
+func runWarnings(conditions []doctor.Finding, cells []plan.Cell, cpus []int, hostCPUs int) []doctor.Finding {
+	var warnings []doctor.Finding
+	for _, f := range conditions {
+		if f.Level == doctor.Warning {
+			warnings = append(warnings, f)
+		}
+	}
+	available, kind := hostCPUs, "CPUs"
+	if len(cpus) > 0 {
+		available, kind = len(cpus), "pinned CPUs"
+	} else {
+		warnings = append(warnings, doctor.Finding{
+			Level:  doctor.Warning,
+			Check:  "cpus",
+			Detail: "not pinned, the scheduler moves benches between CPUs",
+			Fix:    "set cpus in the plan or pass --cpus",
+		})
+	}
+	seen := map[plan.Cell]bool{}
+	for _, c := range cells {
+		key := plan.Cell{Bench: c.Bench, Threads: c.Threads}
+		if c.Threads <= available || seen[key] {
+			continue
+		}
+		seen[key] = true
+		warnings = append(warnings, doctor.Finding{
+			Level:  doctor.Warning,
+			Check:  "threads",
+			Detail: fmt.Sprintf("%s runs %d threads on %d %s, they wait for each other", c.Bench, c.Threads, available, kind),
+			Fix:    "pin more CPUs or run fewer threads",
+		})
+	}
+	return warnings
 }
 
 func resultsDir(base string, now time.Time) (string, error) {

@@ -49,6 +49,7 @@ type Executor struct {
 	Rootfs string
 	Runner string
 	Bwrap  string
+	CPUs   string
 
 	checker  *elfcheck.Checker
 	problems map[string][]elfcheck.Problem
@@ -244,6 +245,7 @@ func (e *Executor) Spec(in Input) (sandbox.Spec, func(), error) {
 		Cmd: runner.Args(runnerBin, runner.Options{
 			Env:     childEnv,
 			Timeout: timeout,
+			CPUs:    e.CPUs,
 			Stdout:  path.Join(resultsDir, stdoutFile),
 			Stderr:  path.Join(resultsDir, stderrFile),
 			Result:  path.Join(resultsDir, resultFile),
