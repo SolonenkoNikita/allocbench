@@ -155,6 +155,23 @@ func TestHealthyMachine(t *testing.T) {
 	}
 }
 
+func TestRequirementsAndConditions(t *testing.T) {
+	c, _ := newChecker(t, healthyFiles)
+	names := func(findings []Finding) []string {
+		var out []string
+		for _, f := range findings {
+			out = append(out, f.Check)
+		}
+		return out
+	}
+	if got := names(c.Requirements()); !reflect.DeepEqual(got, []string{"kernel", "bwrap", "mmdebstrap", "git", "user namespaces", "/etc/subuid", "/etc/subgid"}) {
+		t.Errorf("requirements: %v", got)
+	}
+	if got := names(c.Conditions()); !reflect.DeepEqual(got, []string{"cpu governor", "turbo boost", "core dumps", "huge pages", "memory", "load", "power"}) {
+		t.Errorf("conditions: %v", got)
+	}
+}
+
 func TestEmptyRoot(t *testing.T) {
 	c, _ := newChecker(t, nil)
 	findings := c.Check()

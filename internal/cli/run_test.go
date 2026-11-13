@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/SolonenkoNikita/allocbench/internal/cell"
+	"github.com/SolonenkoNikita/allocbench/internal/doctor"
 	"github.com/SolonenkoNikita/allocbench/internal/plan"
 	"github.com/SolonenkoNikita/allocbench/internal/recipe"
 	"github.com/SolonenkoNikita/allocbench/internal/runner"
@@ -41,6 +43,7 @@ func parsePlan(t *testing.T, s *recipe.Set, args ...string) (*plan.Plan, error) 
 		ro.runEnv, _ = f.GetString("run-env")
 		ro.repeat, _ = f.GetInt("repeat")
 		ro.order, _ = f.GetString("order")
+		ro.cpus, _ = f.GetString("cpus")
 		got, planErr = runPlan(c, ro, s)
 		return nil
 	}
@@ -52,11 +55,11 @@ func parsePlan(t *testing.T, s *recipe.Set, args ...string) (*plan.Plan, error) 
 }
 
 func TestRunPlanFlags(t *testing.T) {
-	p, err := parsePlan(t, runSet(), "--alloc", "sys,mi", "--bench", "cfrac", "--repeat", "3", "--order", "sequential")
+	p, err := parsePlan(t, runSet(), "--alloc", "sys,mi", "--bench", "cfrac", "--repeat", "3", "--order", "sequential", "--cpus", "2-3")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &plan.Plan{Allocators: []string{"sys", "mi"}, Benches: []string{"cfrac"}, RunEnv: "gcc13", Repeat: 3, Order: "sequential"}
+	want := &plan.Plan{Allocators: []string{"sys", "mi"}, Benches: []string{"cfrac"}, RunEnv: "gcc13", Repeat: 3, Order: "sequential", CPUs: "2-3"}
 	if !reflect.DeepEqual(p, want) {
 		t.Errorf("got %+v, want %+v", p, want)
 	}
@@ -81,21 +84,22 @@ func TestRunPlanFile(t *testing.T) {
 benches = ["larson"]
 run_env = "gcc13"
 repeat = 5
+cpus = "1-2"
 `), 0o644)
 
 	p, err := parsePlan(t, runSet(), "--plan", file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(p.Allocators, []string{"sys", "je"}) || p.Repeat != 5 {
+	if !reflect.DeepEqual(p.Allocators, []string{"sys", "je"}) || p.Repeat != 5 || p.CPUs != "1-2" {
 		t.Errorf("from file: %+v", p)
 	}
 
-	p, err = parsePlan(t, runSet(), "--plan", file, "--alloc", "mi", "--repeat", "2")
+	p, err = parsePlan(t, runSet(), "--plan", file, "--alloc", "mi", "--repeat", "2", "--cpus", "4")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(p.Allocators, []string{"mi"}) || p.Repeat != 2 || !reflect.DeepEqual(p.Benches, []string{"larson"}) {
+	if !reflect.DeepEqual(p.Allocators, []string{"mi"}) || p.Repeat != 2 || p.CPUs != "4" || !reflect.DeepEqual(p.Benches, []string{"larson"}) {
 		t.Errorf("flags do not override the file: %+v", p)
 	}
 
@@ -120,6 +124,167 @@ func TestRunPlanErrors(t *testing.T) {
 	if p, err := parsePlan(t, s, "--alloc", "sys", "--bench", "cfrac", "--run-env", "gcc14"); err != nil || p.RunEnv != "gcc14" {
 		t.Errorf("explicit env: %+v, %v", p, err)
 	}
+}
+
+func TestPinnedCPUs(t *testing.T) {
+	for _, tc := range []struct {
+		text, allowed string
+		want          []int
+		err           string
+	}{
+		{text: "", allowed: "0-7"},
+		{text: "2-3,5", allowed: "0-7", want: []int{2, 3, 5}},
+		{text: "2-3", allowed: "", want: []int{2, 3}},
+		{text: "2-3", allowed: "garbage", want: []int{2, 3}},
+		{text: "6-9,12", allowed: "0-7", err: "cpus 8-9,12 are not available, this process may use 0-7"},
+		{text: "x", allowed: "0-7", err: `cpus "x"`},
+	} {
+		got, err := pinnedCPUs(tc.text, tc.allowed)
+		if tc.err != "" {
+			if err == nil || !strings.Contains(err.Error(), tc.err) {
+				t.Errorf("%q in %q: got %v, want %q", tc.text, tc.allowed, err, tc.err)
+			}
+			continue
+		}
+		if err != nil || !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%q in %q: got %v, %v", tc.text, tc.allowed, got, err)
+		}
+	}
+}
+
+func TestRunWarnings(t *testing.T) {
+	conditions := []doctor.Finding{
+		{Level: doctor.OK, Check: "load", Detail: "0.10"},
+		{Level: doctor.Warning, Check: "turbo boost", Detail: "enabled", Fix: "echo 1"},
+	}
+	cells := []plan.Cell{
+		{Bench: "larson", Alloc: "sys", Threads: 1},
+		{Bench: "larson", Alloc: "sys", Threads: 4},
+		{Bench: "larson", Alloc: "mi", Threads: 4},
+		{Bench: "larson", Alloc: "sys", Threads: 8},
+		{Bench: "xmalloc", Alloc: "sys", Threads: 4},
+	}
+	checks := func(findings []doctor.Finding) []string {
+		var out []string
+		for _, f := range findings {
+			if f.Level != doctor.Warning || f.Fix == "" {
+				t.Errorf("finding: %+v", f)
+			}
+			out = append(out, f.Check+": "+f.Detail)
+		}
+		return out
+	}
+
+	got := checks(runWarnings(conditions, cells, []int{2, 3}, 8))
+	want := []string{
+		"turbo boost: enabled",
+		"threads: larson runs 4 threads on 2 pinned CPUs, they wait for each other",
+		"threads: larson runs 8 threads on 2 pinned CPUs, they wait for each other",
+		"threads: xmalloc runs 4 threads on 2 pinned CPUs, they wait for each other",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("pinned:\n got %q\nwant %q", got, want)
+	}
+
+	got = checks(runWarnings(nil, cells, nil, 4))
+	want = []string{
+		"cpus: not pinned, the scheduler moves benches between CPUs",
+		"threads: larson runs 8 threads on 4 CPUs, they wait for each other",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("not pinned:\n got %q\nwant %q", got, want)
+	}
+
+	if got := runWarnings(conditions[:1], cells[:1], []int{0}, 8); len(got) != 0 {
+		t.Errorf("quiet: %+v", got)
+	}
+}
+
+func stubConditions(t *testing.T, findings ...doctor.Finding) {
+	t.Helper()
+	saved := hostConditions
+	hostConditions = func() []doctor.Finding { return findings }
+	t.Cleanup(func() { hostConditions = saved })
+}
+
+func readManifest(t *testing.T, results string) map[string]any {
+	t.Helper()
+	runs, _ := filepath.Glob(filepath.Join(results, "*", "manifest.json"))
+	if len(runs) != 1 {
+		t.Fatalf("runs: %v", runs)
+	}
+	var manifest map[string]any
+	data := readText(t, runs[0])
+	if err := json.Unmarshal([]byte(data), &manifest); err != nil {
+		t.Fatalf("manifest: %v\n%s", err, data)
+	}
+	return manifest
+}
+
+func TestRunCommandPinned(t *testing.T) {
+	dir, recipes, storeDir := runProject(t)
+	os.WriteFile(filepath.Join(recipes, "benches", "affinity.toml"),
+		[]byte(`run.cmd = ["/bin/grep", "Cpus_allowed_list", "/proc/self/status"]`+"\n"), 0o644)
+	stubConditions(t,
+		doctor.Finding{Level: doctor.OK, Check: "load", Detail: "0.10"},
+		doctor.Finding{Level: doctor.Warning, Check: "turbo boost", Detail: "enabled", Fix: "echo 1"})
+	allowed, err := plan.ParseCPUs(strings.TrimSpace(fieldOf(t, "/proc/self/status", "Cpus_allowed_list")))
+	if err != nil || len(allowed) == 0 {
+		t.Skipf("allowed CPUs: %v %v", allowed, err)
+	}
+	cpu := allowed[len(allowed)-1]
+	results := filepath.Join(dir, "results")
+
+	out, err := runCLI(t, "run", "--recipes", recipes, "--store", storeDir, "--results", results,
+		"--alloc", "sys", "--bench", "affinity", "--cpus", fmt.Sprint(cpu))
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+	for _, w := range []string{
+		"warning: turbo boost: enabled\n  fix: echo 1\n",
+		fmt.Sprintf("pinned to CPUs %d\n", cpu),
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing %q in:\n%s", w, out)
+		}
+	}
+	if strings.Contains(out, "warning: cpus") || strings.Contains(out, "load") {
+		t.Errorf("output:\n%s", out)
+	}
+
+	manifest := readManifest(t, results)
+	if p := manifest["plan"].(map[string]any); p["cpus"] != fmt.Sprint(cpu) {
+		t.Errorf("plan: %v", p)
+	}
+	if w := manifest["warnings"].([]any); len(w) != 1 || w[0] != "turbo boost: enabled" {
+		t.Errorf("warnings: %v", w)
+	}
+	if h := manifest["host"].(map[string]any); h["allowed_cpus"] == "" {
+		t.Errorf("host: %v", h)
+	}
+	stdouts, _ := filepath.Glob(filepath.Join(results, "*", "cells", "affinity", "sys", "t1", "r0", "stdout"))
+	if len(stdouts) != 1 {
+		t.Fatalf("cells: %v", stdouts)
+	}
+	if got := readText(t, stdouts[0]); got != fmt.Sprintf("Cpus_allowed_list:\t%d\n", cpu) {
+		t.Errorf("stdout: %q", got)
+	}
+
+	if out, err := runCLI(t, "run", "--recipes", recipes, "--store", storeDir, "--results", results,
+		"--alloc", "sys", "--bench", "affinity", "--cpus", fmt.Sprint(plan.MaxCPU)); err == nil || !strings.Contains(err.Error(), "are not available") {
+		t.Errorf("unavailable: %v\n%s", err, out)
+	}
+}
+
+func fieldOf(t *testing.T, name, key string) string {
+	t.Helper()
+	for _, line := range strings.Split(readText(t, name), "\n") {
+		if value, ok := strings.CutPrefix(line, key+":"); ok {
+			return value
+		}
+	}
+	t.Skipf("no %s in %s", key, name)
+	return ""
 }
 
 func TestExpandAll(t *testing.T) {
@@ -278,6 +443,7 @@ func runProject(t *testing.T) (dir, recipes, storeDir string) {
 
 func TestRunCommand(t *testing.T) {
 	dir, recipes, storeDir := runProject(t)
+	stubConditions(t)
 	results := filepath.Join(dir, "results")
 	out, err := runCLI(t, "run", "--recipes", recipes, "--store", storeDir, "--results", results,
 		"--alloc", "sys,hello", "--bench", "echo", "--repeat", "2")
@@ -309,6 +475,12 @@ func TestRunCommand(t *testing.T) {
 	builds := manifest["builds"].(map[string]any)
 	if manifest["finished"] == nil || builds["allocators/sys"] != "" || len(builds["allocators/hello"].(string)) != 64 || len(builds["tools/runner"].(string)) != 64 {
 		t.Errorf("manifest:\n%s", data)
+	}
+	if w := manifest["warnings"].([]any); len(w) != 1 || w[0] != "cpus: not pinned, the scheduler moves benches between CPUs" {
+		t.Errorf("warnings: %v", w)
+	}
+	if p := manifest["plan"].(map[string]any); p["cpus"] != "" {
+		t.Errorf("plan: %v", p)
 	}
 	if env := manifest["run_env"].(map[string]any); env["name"] != "host" || len(env["hash"].(string)) != 64 {
 		t.Errorf("run_env: %v", env)

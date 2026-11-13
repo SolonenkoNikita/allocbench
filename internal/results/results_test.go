@@ -175,6 +175,7 @@ func TestReadHost(t *testing.T) {
 		"sys/kernel/mm/transparent_hugepage/enabled":           "always [madvise] never\n",
 		"sys/devices/system/cpu/cpu0/cpufreq/scaling_governor": "powersave\n",
 		"proc/sys/vm/overcommit_memory":                        "0\n",
+		"proc/self/status":                                     "Name:\tallocbench\nCpus_allowed:\tff\nCpus_allowed_list:\t0-7\n",
 	} {
 		p := filepath.Join(root, name)
 		os.MkdirAll(filepath.Dir(p), 0o755)
@@ -183,7 +184,7 @@ func TestReadHost(t *testing.T) {
 	got := ReadHost(root)
 	want := Host{
 		Kernel: "6.14.0-36-generic", Arch: runtime.GOARCH, CPUModel: "Intel(R) Core(TM) i5-10310U CPU @ 1.70GHz",
-		CPUs: runtime.NumCPU(), MemoryKB: 15969024, THP: "madvise", Governor: "powersave", Overcommit: "0",
+		CPUs: runtime.NumCPU(), AllowedCPUs: "0-7", MemoryKB: 15969024, THP: "madvise", Governor: "powersave", Overcommit: "0",
 	}
 	if got != want {
 		t.Errorf("got  %+v\nwant %+v", got, want)
@@ -195,7 +196,7 @@ func TestReadHost(t *testing.T) {
 
 func TestReadHostMissing(t *testing.T) {
 	got := ReadHost(t.TempDir())
-	if got.Kernel != "" || got.CPUModel != "" || got.MemoryKB != 0 || got.THP != "" || got.CPUs != runtime.NumCPU() {
+	if got.Kernel != "" || got.CPUModel != "" || got.MemoryKB != 0 || got.THP != "" || got.AllowedCPUs != "" || got.CPUs != runtime.NumCPU() {
 		t.Errorf("got %+v", got)
 	}
 }

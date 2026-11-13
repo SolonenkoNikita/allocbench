@@ -189,6 +189,48 @@ func TestRunEnvAndOutput(t *testing.T) {
 	}
 }
 
+func allowedCPUs(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		t.Skip("no /proc/self/status")
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if list, ok := strings.CutPrefix(line, "Cpus_allowed_list:"); ok {
+			var cpus []string
+			for _, item := range strings.Split(strings.TrimSpace(list), ",") {
+				first, last, _ := strings.Cut(item, "-")
+				cpus = append(cpus, first)
+				if last != "" {
+					cpus = append(cpus, last)
+				}
+			}
+			return cpus
+		}
+	}
+	t.Skip("no Cpus_allowed_list")
+	return nil
+}
+
+func TestRunCPUs(t *testing.T) {
+	cpus := allowedCPUs(t)
+	dir := t.TempDir()
+	stdout := filepath.Join(dir, "out")
+	for _, list := range []string{cpus[len(cpus)-1], cpus[0] + "," + cpus[len(cpus)-1]} {
+		r := run(t, Options{CPUs: list, Stdout: stdout}, "/bin/sh", "-c", "grep Cpus_allowed_list /proc/self/status")
+		if !r.OK() {
+			t.Fatalf("result: %+v", r)
+		}
+		want := list
+		if cpus[0] == cpus[len(cpus)-1] {
+			want = cpus[0]
+		}
+		if data, _ := os.ReadFile(stdout); strings.TrimSpace(strings.TrimPrefix(string(data), "Cpus_allowed_list:")) != want {
+			t.Errorf("%s: %q", list, data)
+		}
+	}
+}
+
 func TestRunEnvDoesNotReachRunner(t *testing.T) {
 	needRunner(t)
 	args := Args(runnerBin, Options{Env: map[string]string{"LD_PRELOAD": "/nonexistent.so"}}, []string{"/bin/sh", "-c", "echo $LD_PRELOAD"})
@@ -250,6 +292,17 @@ func TestRunnerUsage(t *testing.T) {
 		{[]string{"--env", "NOEQUALS", "--", "/bin/true"}, 2, "--env needs KEY=VALUE"},
 		{[]string{"--env", "=x", "--", "/bin/true"}, 2, "--env needs KEY=VALUE"},
 		{[]string{"--stdout"}, 2, "option needs a value"},
+		{[]string{"--cpus"}, 2, "option needs a value"},
+		{[]string{"--cpus", "", "--", "/bin/true"}, 2, "--cpus needs a list like 0-3,6"},
+		{[]string{"--cpus", "a", "--", "/bin/true"}, 2, "--cpus needs a list like 0-3,6"},
+		{[]string{"--cpus", "1,", "--", "/bin/true"}, 2, "--cpus needs a list like 0-3,6"},
+		{[]string{"--cpus", "1-", "--", "/bin/true"}, 2, "--cpus needs a list like 0-3,6"},
+		{[]string{"--cpus", "-1", "--", "/bin/true"}, 2, "--cpus needs a list like 0-3,6"},
+		{[]string{"--cpus", "1;2", "--", "/bin/true"}, 2, "--cpus needs a list like 0-3,6"},
+		{[]string{"--cpus", "3-1", "--", "/bin/true"}, 2, "--cpus has a range that goes down"},
+		{[]string{"--cpus", "1024", "--", "/bin/true"}, 2, "--cpus has a CPU number above the limit"},
+		{[]string{"--cpus", "99999999999999999999", "--", "/bin/true"}, 2, "--cpus has a CPU number above the limit"},
+		{[]string{"--cpus", "1023", "--", "/bin/true"}, 1, "sched_setaffinity"},
 		{[]string{"--stdout", "/nonexistent/dir/out", "--", "/bin/true"}, 1, "/nonexistent/dir/out"},
 	}
 	for _, tt := range tests {
@@ -268,6 +321,7 @@ func TestArgs(t *testing.T) {
 	got := Args("/runner/bin/runner", Options{
 		Env:     map[string]string{"LD_PRELOAD": "/alloc/lib/libmimalloc.so", "MIMALLOC_VERBOSE": "0"},
 		Timeout: 1500 * time.Millisecond,
+		CPUs:    "2-5",
 		Stdout:  "/results/out",
 		Result:  "/results/result.json",
 	}, []string{"/bench/bin/cfrac", "17"})
@@ -276,6 +330,7 @@ func TestArgs(t *testing.T) {
 		"--env", "LD_PRELOAD=/alloc/lib/libmimalloc.so",
 		"--env", "MIMALLOC_VERBOSE=0",
 		"--timeout", "1.5",
+		"--cpus", "2-5",
 		"--stdout", "/results/out",
 		"--result", "/results/result.json",
 		"--", "/bench/bin/cfrac", "17",

@@ -106,6 +106,46 @@ func TestSpecSys(t *testing.T) {
 	}
 }
 
+func TestSpecCPUs(t *testing.T) {
+	e := &Executor{Rootfs: "/rootfs", Runner: "/store/runner", CPUs: "2-3"}
+	spec, cleanup, err := e.Spec(Input{Cell: cell("sys"), Bench: bench(), BenchDir: "/store/bench", Out: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if i := slices.Index(spec.Cmd, "--cpus"); i < 0 || spec.Cmd[i+1] != "2-3" || i > slices.Index(spec.Cmd, "--") {
+		t.Errorf("cmd: %v", spec.Cmd)
+	}
+}
+
+func firstAllowedCPU(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		t.Skip("no /proc/self/status")
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if list, ok := strings.CutPrefix(line, "Cpus_allowed_list:"); ok {
+			return strings.FieldsFunc(strings.TrimSpace(list), func(r rune) bool { return r == ',' || r == '-' })[0]
+		}
+	}
+	t.Skip("no Cpus_allowed_list")
+	return ""
+}
+
+func TestRunCPUs(t *testing.T) {
+	w := newWorld(t)
+	cpu := firstAllowedCPU(t)
+	w.exec.CPUs = cpu
+	r := w.run(t, "sys", recipe.Bench{Run: recipe.Run{Cmd: []string{"/bin/grep", "Cpus_allowed_list", "/proc/self/status"}}})
+	if !r.OK() {
+		t.Fatalf("result: %+v", r)
+	}
+	if got := read(t, r.Dir, "stdout"); got != "Cpus_allowed_list:\t"+cpu+"\n" {
+		t.Errorf("stdout %q", got)
+	}
+}
+
 func TestSpecPreload(t *testing.T) {
 	alloc := t.TempDir()
 	writeFile(t, filepath.Join(alloc, "lib", "libfake.so"), "", 0o644)

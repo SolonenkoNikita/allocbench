@@ -156,6 +156,7 @@ func TestResolveErrors(t *testing.T) {
 		RunEnv:     "gcc99",
 		Repeat:     0,
 		Order:      "random",
+		CPUs:       "3-1",
 	}
 	_, err := Resolve(p, testSet())
 	if err == nil {
@@ -168,6 +169,7 @@ func TestResolveErrors(t *testing.T) {
 		`run_env "gcc99" is not a recipe in envs`,
 		"repeat 0 must be at least 1",
 		`order "random" must be interleaved or sequential`,
+		`cpus "3-1": range 3-1 goes down`,
 	} {
 		if !strings.Contains(err.Error(), w) {
 			t.Errorf("error does not contain %q:\n%v", w, err)
