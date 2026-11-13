@@ -174,6 +174,25 @@ func (w *Writer) Close() error {
 	return errCSV
 }
 
+func ReadRecords(dir string) ([]Record, error) {
+	name := filepath.Join(dir, JSONLFile)
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var records []Record
+	dec := json.NewDecoder(f)
+	for dec.More() {
+		var r Record
+		if err := dec.Decode(&r); err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		records = append(records, r)
+	}
+	return records, nil
+}
+
 func WriteManifest(dir string, m Manifest) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
