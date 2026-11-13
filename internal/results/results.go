@@ -105,6 +105,9 @@ func (r Record) csvRow() []string {
 }
 
 func NewRecord(dir string, r cell.Result) Record {
+	if abs, err := filepath.Abs(dir); err == nil && filepath.IsAbs(r.Dir) {
+		dir = abs
+	}
 	rel, err := filepath.Rel(dir, r.Dir)
 	if err != nil {
 		rel = r.Dir
