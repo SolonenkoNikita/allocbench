@@ -47,6 +47,30 @@ func TestNewRecord(t *testing.T) {
 	}
 }
 
+func TestNewRecordRelativeDir(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(wd) })
+
+	abs := cellResult(filepath.Join(root, "results", "run"), "mi", "ok")
+	if got := NewRecord(filepath.Join("results", "run"), abs).Dir; got != "cells/cfrac/mi/t2/r1" {
+		t.Errorf("absolute cell dir: %q", got)
+	}
+	rel := cellResult(filepath.Join("results", "run"), "mi", "ok")
+	if got := NewRecord(filepath.Join("results", "run"), rel).Dir; got != "cells/cfrac/mi/t2/r1" {
+		t.Errorf("relative cell dir: %q", got)
+	}
+	if got := NewRecord(filepath.Join("results", "run"), cellResult("/elsewhere", "mi", "ok")).Dir; !strings.HasPrefix(got, "../") || !strings.HasSuffix(got, "/elsewhere/cells/cfrac/mi/t2/r1") {
+		t.Errorf("outside: %q", got)
+	}
+}
+
 func TestWriter(t *testing.T) {
 	dir := t.TempDir()
 	w, err := Create(dir)
