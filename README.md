@@ -196,22 +196,28 @@ allocators/sys  nothing to build  -             -
 Сравнить аллокаторы. `run` сам соберёт всё недостающее и выполнит каждую ячейку в новой песочнице:
 
 ```bash
-$ ./allocbench run --alloc sys,mi --bench cfrac --repeat 3
+$ ./allocbench run --alloc sys,mi --bench cfrac --repeat 3 --cpus 3
+warning: cpu governor: powersave on 8 of 8 CPUs, the frequency follows the load
+  fix: echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+warning: turbo boost: enabled, the frequency depends on temperature
+  fix: echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 host: Intel(R) Core(TM) i5-10310U CPU @ 1.70GHz, 8 CPUs, amd64, kernel 6.14.0-36-generic
-running 6 cells, results in results/20261112T200539Z
-[1/6] cfrac/sys/t1/r0              ok             8.401s   3.1 MB
-[2/6] cfrac/mi/t1/r0               ok             7.615s   3.0 MB
-[3/6] cfrac/sys/t1/r1              ok             8.395s   2.9 MB
-[4/6] cfrac/mi/t1/r1               ok             7.648s   2.9 MB
-[5/6] cfrac/sys/t1/r2              ok             8.305s   3.0 MB
-[6/6] cfrac/mi/t1/r2               ok             7.598s   2.9 MB
+pinned to CPUs 3
+running 6 cells, results in results/20261113T162559Z
+[1/6] cfrac/sys/t1/r0              ok             7.758s   3.1 MB
+[2/6] cfrac/mi/t1/r0               ok             7.206s   3.1 MB
+[3/6] cfrac/sys/t1/r1              ok             7.428s   3.2 MB
+[4/6] cfrac/mi/t1/r1               ok             6.788s   3.1 MB
+[5/6] cfrac/sys/t1/r2              ok             7.548s   3.1 MB
+[6/6] cfrac/mi/t1/r2               ok             6.748s   3.1 MB
 
 BENCH  THREADS  ALLOC  OK   MEDIAN  MIN     MAX     RELATIVE  MAX RSS
-cfrac  1        sys    3/3  8.395s  8.305s  8.401s  1.00      3.0 MB
-cfrac  1        mi     3/3  7.615s  7.598s  7.648s  0.91      2.9 MB
+cfrac  1        sys    3/3  7.548s  7.428s  7.758s  1.00      3.1 MB
+cfrac  1        mi     3/3  6.788s  6.748s  7.206s  0.90      3.1 MB
 ```
 
 `RELATIVE` — медиана времени относительно первого аллокатора в списке: удобно ставить `sys` первым.
+`--cpus 3` закрепляет тесты на третьем ядре. Предупреждения в начале — те же, что показывает `allocbench doctor`: замер идёт, но на шумной машине.
 
 ---
 
@@ -359,6 +365,7 @@ benches    = ["cfrac"]
 run_env    = "gcc13"
 repeat     = 5
 order      = "interleaved"
+cpus       = "2-5"
 ```
 
 ```bash
@@ -366,6 +373,14 @@ order      = "interleaved"
 ./allocbench run --plan plan.toml --repeat 10
 ./allocbench run --alloc all --bench all
 ```
+
+`cpus` (или `--cpus`) закрепляет тест на перечисленных ядрах: список вида `2-5,7`. Без закрепления планировщик переносит тест между ядрами, и разброс растёт.
+Раннер вызывает `sched_setaffinity` до запуска теста, поэтому закрепление действует на тест и все его потоки и дочерние процессы.
+Ядра должны быть доступны самому `allocbench`: если процесс уже ограничен через `taskset` или cgroup, ядра вне этого набора — ошибка до начала сборок.
+Для замеров лучше брать ядра, на которых меньше всего фоновой работы, и не брать соседние гиперпотоки одного физического ядра.
+
+Перед первой ячейкой `run` выводит предупреждения о шумных условиях: проверки `allocbench doctor` (частота, турбобуст, обработчик падений, THP, память, загрузка, питание), отсутствие закрепления и тесты, которым потоков больше, чем ядер.
+Прогон с предупреждениями не останавливается: они печатаются в stderr и записываются в `manifest.json`.
 
 Результаты складываются в `results/<время UTC>/`:
 
@@ -393,7 +408,8 @@ results/20261112T200539Z/
 | `nvcsw`, `nivcsw` | добровольные и принудительные переключения контекста |
 | `stdout_sha256` | хеш вывода; сверяется с `check.stdout_sha256` рецепта |
 
-В `manifest.json` записываются ядро, модель CPU, число ядер, объём памяти, режим transparent huge pages, `cpu governor` и `overcommit_memory`: rootfs их не фиксирует, а на результат они влияют.
+В `manifest.json` записываются ядро, модель CPU, число ядер, доступные процессу ядра (`allowed_cpus`), объём памяти, режим transparent huge pages, `cpu governor` и `overcommit_memory`: rootfs их не фиксирует, а на результат они влияют.
+Там же лежат закреплённые ядра (`plan.cpus`) и предупреждения прогона (`warnings`).
 
 ---
 
@@ -448,7 +464,7 @@ benches/cfrac: reproducible, out e362c4a97aa8, same as the store
 | `allocbench list` | таблица рецептов с входными хешами |
 | `allocbench build <рецепт>...` | собрать рецепты и их зависимости; рецепт — `mi` или `allocators/mi` |
 | `allocbench shell <рецепт> [-- команда]` | оболочка в песочнице сборки рецепта или в окружении |
-| `allocbench run` | собрать всё нужное плану и выполнить ячейки; флаги `--plan`, `--alloc`, `--bench`, `--run-env`, `--repeat`, `--order`, `--results` |
+| `allocbench run` | собрать всё нужное плану и выполнить ячейки; флаги `--plan`, `--alloc`, `--bench`, `--run-env`, `--repeat`, `--order`, `--cpus`, `--results` |
 | `allocbench lock [рецепт]...` | записать хеши окружений и сборок в `allocbench.lock`; с `--check` — сверить с ним |
 | `allocbench verify [рецепт]...` | собрать дважды и сравнить результаты по файлам |
 | `allocbench doctor` | проверить, подходит ли машина для сборок и замеров |
