@@ -126,6 +126,42 @@ func TestCreateRefusesExisting(t *testing.T) {
 	}
 }
 
+func TestReadRecords(t *testing.T) {
+	dir := t.TempDir()
+	w, err := Create(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []cell.Result{cellResult(dir, "sys", "ok"), cellResult(dir, "mi", "exit code 1")}
+	for _, r := range want {
+		if err := w.Add(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.Close()
+
+	got, err := ReadRecords(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d records", len(got))
+	}
+	for i := range want {
+		if got[i] != NewRecord(dir, want[i]) {
+			t.Errorf("record %d:\n got %+v\nwant %+v", i, got[i], NewRecord(dir, want[i]))
+		}
+	}
+
+	if _, err := ReadRecords(t.TempDir()); !os.IsNotExist(err) {
+		t.Errorf("missing: %v", err)
+	}
+	os.WriteFile(filepath.Join(dir, JSONLFile), []byte("{}\n{oops\n"), 0o644)
+	if _, err := ReadRecords(dir); err == nil || !strings.Contains(err.Error(), JSONLFile) {
+		t.Errorf("broken: %v", err)
+	}
+}
+
 func TestWriteManifest(t *testing.T) {
 	dir := t.TempDir()
 	started := time.Date(2026, 11, 12, 20, 10, 28, 0, time.UTC)
